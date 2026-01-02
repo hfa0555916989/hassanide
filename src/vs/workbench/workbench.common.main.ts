@@ -196,6 +196,12 @@ import './contrib/preferences/browser/preferences.contribution.js';
 import './contrib/preferences/browser/keybindingsEditorContribution.js';
 import './contrib/preferences/browser/preferencesSearch.js';
 
+// First Run
+import './contrib/firstRun/browser/firstRunBootstrap.contribution.js';
+
+// Licensing
+import './contrib/licensing/browser/licensing.contribution.js';
+
 // Performance
 import './contrib/performance/browser/performance.contribution.js';
 
