@@ -1,0 +1,56 @@
+name: Windows Build
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Use Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows bundle
+        run: npm run gulp "vscode-win32-x64-min"
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "..\\VSCode-win32-x64\\resources\\app\\product.json")) {
+            throw "Missing ..\\VSCode-win32-x64\\resources\\app\\product.json"
+          }
+
+      - name: Build Windows installer
+        run: npm run gulp "vscode-win32-x64-system-setup"
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          if (Test-Path .build/win32-x64/system-setup) {
+            Copy-Item -Path .build/win32-x64/system-setup/* -Destination dist -Recurse -Force
+          }
+          if (Test-Path .build/win32-x64/archive) {
+            Copy-Item -Path .build/win32-x64/archive/* -Destination dist -Recurse -Force
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-dist
+          path: dist/**
