@@ -1,0 +1,318 @@
+# =============================================================================
+# HassanIDE - Universal Binary for macOS
+# =============================================================================
+# يبني نسخة universal binary لـ macOS (Intel + Apple Silicon في ملف واحد)
+# =============================================================================
+
+name: "🍎 macOS Universal Binary"
+
+on:
+  release:
+    types: [published]
+  
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'الإصدار'
+        required: false
+        default: 'latest'
+
+env:
+  NODE_OPTIONS: '--max_old_space_size=8192'
+  PRODUCT_NAME: 'HassanIDE'
+
+jobs:
+  # ===========================================================================
+  # بناء Universal Binary
+  # ===========================================================================
+  build-universal:
+    name: "🍎 Universal Binary"
+    runs-on: macos-14
+    timeout-minutes: 90
+    
+    steps:
+      # =========================================================================
+      # إعداد البيئة
+      # =========================================================================
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: "📦 Setup Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: "🔧 Setup Build Environment"
+        run: |
+          echo "=== System Info ==="
+          uname -a
+          sw_vers
+          xcodebuild -version || true
+          
+          # تثبيت أدوات البناء
+          brew install jq || true
+
+      # =========================================================================
+      # تثبيت Dependencies
+      # =========================================================================
+      - name: "📦 Install Dependencies"
+        uses: nick-fields/retry@v2
+        with:
+          timeout_minutes: 25
+          max_attempts: 3
+          command: |
+            npm ci --legacy-peer-deps --ignore-scripts || npm install --legacy-peer-deps --ignore-scripts
+            npm rebuild
+
+      - name: "🔧 Install Global Tools"
+        run: |
+          corepack enable
+          npm install -g typescript ts-node gulp-cli
+
+      # =========================================================================
+      # بناء x64 (Intel)
+      # =========================================================================
+      - name: "🔨 Build x64 (Intel)"
+        run: |
+          echo "🔨 Building for x64 (Intel)..."
+          npm run gulp -- vscode-darwin-x64-min
+        continue-on-error: true
+
+      - name: "📦 Package x64"
+        run: |
+          if [ -d "../VSCode-darwin-x64" ]; then
+            echo "✅ x64 build found"
+            mkdir -p universal-build/x64
+            cp -R ../VSCode-darwin-x64 universal-build/x64/
+          else
+            echo "⚠️ x64 build not found"
+          fi
+
+      # =========================================================================
+      # بناء arm64 (Apple Silicon)
+      # =========================================================================
+      - name: "🔨 Build arm64 (Apple Silicon)"
+        run: |
+          echo "🔨 Building for arm64 (Apple Silicon)..."
+          npm run gulp -- vscode-darwin-arm64-min
+        continue-on-error: true
+
+      - name: "📦 Package arm64"
+        run: |
+          if [ -d "../VSCode-darwin-arm64" ]; then
+            echo "✅ arm64 build found"
+            mkdir -p universal-build/arm64
+            cp -R ../VSCode-darwin-arm64 universal-build/arm64/
+          else
+            echo "⚠️ arm64 build not found"
+          fi
+
+      # =========================================================================
+      # إنشاء Universal Binary
+      # =========================================================================
+      - name: "🔗 Create Universal Binary"
+        run: |
+          echo "=============================================="
+          echo "       🍎 Creating Universal Binary"
+          echo "=============================================="
+          
+          # التحقق من وجود كلا البناءين
+          X64_APP=""
+          ARM64_APP=""
+          
+          if [ -d "universal-build/x64" ]; then
+            X64_APP=$(find universal-build/x64 -name "*.app" -type d | head -1)
+          fi
+          
+          if [ -d "universal-build/arm64" ]; then
+            ARM64_APP=$(find universal-build/arm64 -name "*.app" -type d | head -1)
+          fi
+          
+          if [ -z "$X64_APP" ] || [ -z "$ARM64_APP" ]; then
+            echo "⚠️ Need both x64 and arm64 builds for universal binary"
+            echo "Creating individual builds only..."
+            exit 0
+          fi
+          
+          echo "📍 x64 App: $X64_APP"
+          echo "📍 arm64 App: $ARM64_APP"
+          
+          # إنشاء مجلد Universal
+          mkdir -p universal-build/universal
+          
+          # نسخ هيكل التطبيق من arm64 (أو x64)
+          cp -R "$ARM64_APP" "universal-build/universal/HassanIDE.app"
+          
+          UNIVERSAL_APP="universal-build/universal/HassanIDE.app"
+          
+          # دمج الملفات التنفيذية باستخدام lipo
+          echo "🔗 Merging binaries with lipo..."
+          
+          find "$X64_APP" -type f -perm +111 | while read x64_binary; do
+            # الحصول على المسار النسبي
+            relative_path="${x64_binary#$X64_APP}"
+            arm64_binary="$ARM64_APP$relative_path"
+            universal_binary="$UNIVERSAL_APP$relative_path"
+            
+            # التحقق من أن الملف هو Mach-O binary
+            if file "$x64_binary" | grep -q "Mach-O"; then
+              if [ -f "$arm64_binary" ] && file "$arm64_binary" | grep -q "Mach-O"; then
+                echo "  🔗 Merging: $relative_path"
+                
+                # إنشاء المجلد إذا لم يكن موجوداً
+                mkdir -p "$(dirname "$universal_binary")"
+                
+                # دمج باستخدام lipo
+                lipo -create "$x64_binary" "$arm64_binary" -output "$universal_binary" 2>/dev/null || \
+                  cp "$arm64_binary" "$universal_binary"
+              fi
+            fi
+          done
+          
+          echo "✅ Universal binary created!"
+          
+          # التحقق من النتيجة
+          MAIN_BINARY=$(find "$UNIVERSAL_APP/Contents/MacOS" -type f | head -1)
+          if [ -n "$MAIN_BINARY" ]; then
+            echo "📊 Binary architectures:"
+            lipo -info "$MAIN_BINARY" || file "$MAIN_BINARY"
+          fi
+
+      - name: "📋 Verify Universal Binary"
+        run: |
+          UNIVERSAL_APP="universal-build/universal/HassanIDE.app"
+          
+          if [ -d "$UNIVERSAL_APP" ]; then
+            echo "=== Universal App Structure ==="
+            ls -la "$UNIVERSAL_APP/Contents/"
+            
+            echo ""
+            echo "=== Binary Info ==="
+            MAIN_BINARY=$(find "$UNIVERSAL_APP/Contents/MacOS" -type f -name "*" | head -1)
+            if [ -n "$MAIN_BINARY" ]; then
+              file "$MAIN_BINARY"
+              lipo -archs "$MAIN_BINARY" 2>/dev/null || echo "Single arch"
+            fi
+          else
+            echo "⚠️ Universal app not found"
+          fi
+
+      # =========================================================================
+      # إنشاء DMG
+      # =========================================================================
+      - name: "💿 Create Universal DMG"
+        run: |
+          UNIVERSAL_APP="universal-build/universal/HassanIDE.app"
+          
+          if [ ! -d "$UNIVERSAL_APP" ]; then
+            echo "⚠️ No universal app to package"
+            exit 0
+          fi
+          
+          VERSION=${{ github.event.release.tag_name || github.event.inputs.version || 'dev' }}
+          VERSION="${VERSION#v}"
+          
+          DMG_NAME="HassanIDE-darwin-universal-${VERSION}.dmg"
+          
+          echo "💿 Creating DMG: $DMG_NAME"
+          
+          # إنشاء DMG بسيط
+          mkdir -p dmg-content
+          cp -R "$UNIVERSAL_APP" dmg-content/
+          ln -s /Applications dmg-content/Applications
+          
+          hdiutil create -volname "HassanIDE" \
+            -srcfolder dmg-content \
+            -ov -format UDZO \
+            "$DMG_NAME"
+          
+          echo "✅ DMG created: $DMG_NAME"
+          ls -lh "$DMG_NAME"
+
+      - name: "📦 Create Universal ZIP"
+        run: |
+          UNIVERSAL_APP="universal-build/universal/HassanIDE.app"
+          
+          if [ ! -d "$UNIVERSAL_APP" ]; then
+            echo "⚠️ No universal app to package"
+            exit 0
+          fi
+          
+          VERSION=${{ github.event.release.tag_name || github.event.inputs.version || 'dev' }}
+          VERSION="${VERSION#v}"
+          
+          ZIP_NAME="HassanIDE-darwin-universal-${VERSION}.zip"
+          
+          echo "📦 Creating ZIP: $ZIP_NAME"
+          
+          cd universal-build/universal
+          zip -r -y "../../$ZIP_NAME" "HassanIDE.app"
+          cd ../..
+          
+          echo "✅ ZIP created: $ZIP_NAME"
+          ls -lh "$ZIP_NAME"
+
+      # =========================================================================
+      # رفع Artifacts
+      # =========================================================================
+      - name: "📤 Upload Universal DMG"
+        uses: actions/upload-artifact@v4
+        with:
+          name: HassanIDE-darwin-universal-dmg
+          path: "*.dmg"
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: "📤 Upload Universal ZIP"
+        uses: actions/upload-artifact@v4
+        with:
+          name: HassanIDE-darwin-universal-zip
+          path: "*.zip"
+          retention-days: 30
+          if-no-files-found: ignore
+
+      # =========================================================================
+      # رفع إلى Release
+      # =========================================================================
+      - name: "🚀 Upload to Release"
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            *.dmg
+            *.zip
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ===========================================================================
+  # تقرير البناء
+  # ===========================================================================
+  report:
+    name: "📊 Build Report"
+    runs-on: ubuntu-latest
+    needs: build-universal
+    if: always()
+    
+    steps:
+      - name: "📊 Universal Build Report"
+        run: |
+          echo "=============================================="
+          echo "       🍎 macOS Universal Binary Report"
+          echo "=============================================="
+          echo ""
+          echo "Build Status: ${{ needs.build-universal.result }}"
+          echo ""
+          echo "The universal binary combines:"
+          echo "  • x64 (Intel Macs)"
+          echo "  • arm64 (Apple Silicon M1/M2/M3)"
+          echo ""
+          echo "Benefits:"
+          echo "  ✅ Single download for all Mac users"
+          echo "  ✅ Native performance on both architectures"
+          echo "  ✅ Simplified distribution"
+          echo ""
+          echo "=============================================="

@@ -1,0 +1,347 @@
+# =============================================================================
+# HassanIDE - Auto Update System
+# =============================================================================
+# نظام التحديث التلقائي:
+# - إنشاء ملفات update manifest
+# - تحديث update server
+# - إنشاء delta updates
+# =============================================================================
+
+name: "🔄 Auto Update"
+
+on:
+  release:
+    types: [published]
+  
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'الإصدار'
+        required: true
+
+env:
+  PRODUCT_NAME: 'HassanIDE'
+
+jobs:
+  # ===========================================================================
+  # إنشاء Update Manifest
+  # ===========================================================================
+  create-update-manifest:
+    name: "📋 Create Update Manifest"
+    runs-on: ubuntu-latest
+    
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: "📋 Get Release Info"
+        id: info
+        run: |
+          VERSION="${{ github.event.release.tag_name || github.event.inputs.version }}"
+          VERSION="${VERSION#v}"  # Remove 'v' prefix if present
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Version: $VERSION"
+
+      - name: "📥 Download Release Assets"
+        uses: robinraju/release-downloader@v1
+        with:
+          tag: ${{ github.event.release.tag_name || github.event.inputs.version }}
+          fileName: "*"
+          out-file-path: "release-assets"
+        continue-on-error: true
+
+      - name: "📋 Create Update Manifest - Windows"
+        run: |
+          VERSION="${{ steps.info.outputs.version }}"
+          RELEASE_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          # البحث عن ملفات Windows
+          WIN_X64_FILE=$(find release-assets -name "*win32-x64*.exe" -o -name "*win32-x64*.zip" | head -1)
+          WIN_ARM64_FILE=$(find release-assets -name "*win32-arm64*.exe" -o -name "*win32-arm64*.zip" | head -1)
+          
+          # حساب SHA256
+          WIN_X64_SHA256=""
+          WIN_ARM64_SHA256=""
+          WIN_X64_SIZE=0
+          WIN_ARM64_SIZE=0
+          
+          if [ -f "$WIN_X64_FILE" ]; then
+            WIN_X64_SHA256=$(sha256sum "$WIN_X64_FILE" | cut -d' ' -f1)
+            WIN_X64_SIZE=$(stat -c%s "$WIN_X64_FILE")
+          fi
+          
+          if [ -f "$WIN_ARM64_FILE" ]; then
+            WIN_ARM64_SHA256=$(sha256sum "$WIN_ARM64_FILE" | cut -d' ' -f1)
+            WIN_ARM64_SIZE=$(stat -c%s "$WIN_ARM64_FILE")
+          fi
+          
+          # إنشاء Windows update manifest
+          cat > update-manifest-windows.json << EOF
+          {
+            "version": "$VERSION",
+            "releaseDate": "$RELEASE_DATE",
+            "releaseNotes": "https://github.com/${{ github.repository }}/releases/tag/v$VERSION",
+            "platforms": {
+              "win32-x64": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v$VERSION/HassanIDE-win32-x64-$VERSION.zip",
+                "sha256": "$WIN_X64_SHA256",
+                "size": $WIN_X64_SIZE
+              },
+              "win32-arm64": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v$VERSION/HassanIDE-win32-arm64-$VERSION.zip",
+                "sha256": "$WIN_ARM64_SHA256",
+                "size": $WIN_ARM64_SIZE
+              }
+            }
+          }
+          EOF
+          
+          cat update-manifest-windows.json
+
+      - name: "📋 Create Update Manifest - macOS"
+        run: |
+          VERSION="${{ steps.info.outputs.version }}"
+          RELEASE_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          # البحث عن ملفات macOS
+          MAC_X64_FILE=$(find release-assets -name "*darwin-x64*.zip" -o -name "*darwin-x64*.dmg" | head -1)
+          MAC_ARM64_FILE=$(find release-assets -name "*darwin-arm64*.zip" -o -name "*darwin-arm64*.dmg" | head -1)
+          
+          # حساب SHA256
+          MAC_X64_SHA256=""
+          MAC_ARM64_SHA256=""
+          MAC_X64_SIZE=0
+          MAC_ARM64_SIZE=0
+          
+          if [ -f "$MAC_X64_FILE" ]; then
+            MAC_X64_SHA256=$(sha256sum "$MAC_X64_FILE" | cut -d' ' -f1)
+            MAC_X64_SIZE=$(stat -c%s "$MAC_X64_FILE")
+          fi
+          
+          if [ -f "$MAC_ARM64_FILE" ]; then
+            MAC_ARM64_SHA256=$(sha256sum "$MAC_ARM64_FILE" | cut -d' ' -f1)
+            MAC_ARM64_SIZE=$(stat -c%s "$MAC_ARM64_FILE")
+          fi
+          
+          # إنشاء macOS update manifest
+          cat > update-manifest-macos.json << EOF
+          {
+            "version": "$VERSION",
+            "releaseDate": "$RELEASE_DATE",
+            "releaseNotes": "https://github.com/${{ github.repository }}/releases/tag/v$VERSION",
+            "platforms": {
+              "darwin-x64": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v$VERSION/HassanIDE-darwin-x64-$VERSION.zip",
+                "sha256": "$MAC_X64_SHA256",
+                "size": $MAC_X64_SIZE
+              },
+              "darwin-arm64": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v$VERSION/HassanIDE-darwin-arm64-$VERSION.zip",
+                "sha256": "$MAC_ARM64_SHA256",
+                "size": $MAC_ARM64_SIZE
+              }
+            }
+          }
+          EOF
+          
+          cat update-manifest-macos.json
+
+      - name: "📋 Create Update Manifest - Linux"
+        run: |
+          VERSION="${{ steps.info.outputs.version }}"
+          RELEASE_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          # البحث عن ملفات Linux
+          LINUX_X64_FILE=$(find release-assets -name "*linux-x64*.tar.gz" -o -name "*linux-x64*.AppImage" | head -1)
+          LINUX_ARM64_FILE=$(find release-assets -name "*linux-arm64*.tar.gz" | head -1)
+          
+          # حساب SHA256
+          LINUX_X64_SHA256=""
+          LINUX_ARM64_SHA256=""
+          LINUX_X64_SIZE=0
+          LINUX_ARM64_SIZE=0
+          
+          if [ -f "$LINUX_X64_FILE" ]; then
+            LINUX_X64_SHA256=$(sha256sum "$LINUX_X64_FILE" | cut -d' ' -f1)
+            LINUX_X64_SIZE=$(stat -c%s "$LINUX_X64_FILE")
+          fi
+          
+          if [ -f "$LINUX_ARM64_FILE" ]; then
+            LINUX_ARM64_SHA256=$(sha256sum "$LINUX_ARM64_FILE" | cut -d' ' -f1)
+            LINUX_ARM64_SIZE=$(stat -c%s "$LINUX_ARM64_FILE")
+          fi
+          
+          # إنشاء Linux update manifest
+          cat > update-manifest-linux.json << EOF
+          {
+            "version": "$VERSION",
+            "releaseDate": "$RELEASE_DATE",
+            "releaseNotes": "https://github.com/${{ github.repository }}/releases/tag/v$VERSION",
+            "platforms": {
+              "linux-x64": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v$VERSION/HassanIDE-linux-x64-$VERSION.tar.gz",
+                "sha256": "$LINUX_X64_SHA256",
+                "size": $LINUX_X64_SIZE
+              },
+              "linux-arm64": {
+                "url": "https://github.com/${{ github.repository }}/releases/download/v$VERSION/HassanIDE-linux-arm64-$VERSION.tar.gz",
+                "sha256": "$LINUX_ARM64_SHA256",
+                "size": $LINUX_ARM64_SIZE
+              }
+            }
+          }
+          EOF
+          
+          cat update-manifest-linux.json
+
+      - name: "📋 Create Combined Manifest"
+        run: |
+          VERSION="${{ steps.info.outputs.version }}"
+          RELEASE_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          # دمج جميع الـ manifests
+          cat > latest.json << EOF
+          {
+            "version": "$VERSION",
+            "releaseDate": "$RELEASE_DATE",
+            "releaseNotes": "https://github.com/${{ github.repository }}/releases/tag/v$VERSION",
+            "minimumVersion": "1.0.0",
+            "windows": $(cat update-manifest-windows.json | jq '.platforms'),
+            "macos": $(cat update-manifest-macos.json | jq '.platforms'),
+            "linux": $(cat update-manifest-linux.json | jq '.platforms')
+          }
+          EOF
+          
+          echo "=== Combined Manifest ==="
+          cat latest.json
+
+      - name: "📤 Upload Manifests"
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-manifests
+          path: |
+            update-manifest-*.json
+            latest.json
+          retention-days: 90
+
+      - name: "🌐 Update GitHub Pages (Update Server)"
+        run: |
+          VERSION="${{ steps.info.outputs.version }}"
+          
+          # إنشاء مجلد للـ update server
+          mkdir -p update-server
+          cp latest.json update-server/
+          cp update-manifest-*.json update-server/
+          
+          # إنشاء صفحة بسيطة
+          cat > update-server/index.html << EOF
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>HassanIDE Update Server</title>
+            <style>
+              body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+              h1 { color: #007acc; }
+              pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
+              a { color: #007acc; }
+            </style>
+          </head>
+          <body>
+            <h1>🚀 HassanIDE Update Server</h1>
+            <p>Current Version: <strong>$VERSION</strong></p>
+            <h2>API Endpoints:</h2>
+            <ul>
+              <li><a href="latest.json">latest.json</a> - Latest version info</li>
+              <li><a href="update-manifest-windows.json">update-manifest-windows.json</a></li>
+              <li><a href="update-manifest-macos.json">update-manifest-macos.json</a></li>
+              <li><a href="update-manifest-linux.json">update-manifest-linux.json</a></li>
+            </ul>
+            <h2>Latest Version:</h2>
+            <pre id="version-info">Loading...</pre>
+            <script>
+              fetch('latest.json')
+                .then(r => r.json())
+                .then(d => document.getElementById('version-info').textContent = JSON.stringify(d, null, 2));
+            </script>
+          </body>
+          </html>
+          EOF
+
+      - name: "📤 Upload Update Server Files"
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-server
+          path: update-server/
+          retention-days: 90
+
+  # ===========================================================================
+  # نشر إلى Update Server
+  # ===========================================================================
+  deploy-update-server:
+    name: "🌐 Deploy Update Server"
+    runs-on: ubuntu-latest
+    needs: create-update-manifest
+    
+    steps:
+      - name: "📥 Download Update Server Files"
+        uses: actions/download-artifact@v4
+        with:
+          name: update-server
+          path: update-server
+
+      - name: "🌐 Deploy to GitHub Pages"
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./update-server
+          destination_dir: update
+        continue-on-error: true
+
+      - name: "☁️ Upload to Cloudflare R2"
+        if: secrets.CLOUDFLARE_R2_ACCESS_KEY != ''
+        run: |
+          pip install awscli
+          
+          aws configure set aws_access_key_id ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY }}
+          aws configure set aws_secret_access_key ${{ secrets.CLOUDFLARE_R2_SECRET_KEY }}
+          
+          aws s3 sync update-server/ "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/update/" \
+            --endpoint-url "https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com" \
+            || echo "Cloudflare R2 upload failed"
+        continue-on-error: true
+
+      - name: "📊 Update Server Report"
+        run: |
+          echo "=============================================="
+          echo "       🌐 Update Server Deployed"
+          echo "=============================================="
+          echo ""
+          echo "📦 Version: ${{ needs.create-update-manifest.outputs.version }}"
+          echo ""
+          echo "Update URLs:"
+          echo "📍 GitHub Pages: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/update/latest.json"
+          echo "📍 Cloudflare R2: https://update.hassanide.com/latest.json (if configured)"
+          echo ""
+          echo "=============================================="
+
+  # ===========================================================================
+  # إنشاء Delta Updates (اختياري - للتحديثات السريعة)
+  # ===========================================================================
+  create-delta-updates:
+    name: "⚡ Delta Updates"
+    runs-on: ubuntu-latest
+    needs: create-update-manifest
+    if: false  # معطل افتراضياً - يحتاج إعداد إضافي
+    
+    steps:
+      - name: "📥 Download Current & Previous Versions"
+        run: |
+          echo "Delta updates require storing previous versions"
+          echo "This is an advanced feature that needs additional setup"
+          
+      - name: "⚡ Create Binary Diffs"
+        run: |
+          # يتطلب أداة مثل bsdiff أو courgette
+          echo "Creating binary diffs for faster updates..."

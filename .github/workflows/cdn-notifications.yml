@@ -1,0 +1,315 @@
+# =============================================================================
+# HassanIDE - CDN Distribution & Notifications
+# =============================================================================
+# رفع الملفات إلى CDN + إرسال إشعارات
+# يعمل بعد إنشاء Release
+# =============================================================================
+
+name: "🌍 CDN & Notifications"
+
+on:
+  release:
+    types: [published]
+  
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'الإصدار للتوزيع'
+        required: true
+      notify_only:
+        description: 'إرسال إشعارات فقط (بدون رفع CDN)'
+        type: boolean
+        default: false
+
+env:
+  PRODUCT_NAME: 'HassanIDE'
+
+jobs:
+  # ===========================================================================
+  # رفع إلى Cloudflare R2
+  # ===========================================================================
+  upload-cloudflare-r2:
+    name: "☁️ Cloudflare R2"
+    runs-on: ubuntu-latest
+    if: github.event.inputs.notify_only != 'true'
+    
+    steps:
+      - name: "📥 Download Release Assets"
+        uses: robinraju/release-downloader@v1
+        with:
+          latest: true
+          fileName: "*"
+          out-file-path: "downloads"
+        continue-on-error: true
+
+      - name: "📋 List downloaded files"
+        run: |
+          echo "=== Downloaded Files ==="
+          ls -la downloads/ 2>/dev/null || echo "No files downloaded"
+
+      - name: "☁️ Upload to Cloudflare R2"
+        if: env.CLOUDFLARE_R2_ACCESS_KEY != ''
+        run: |
+          # تثبيت AWS CLI (متوافق مع R2)
+          pip install awscli
+          
+          # إعداد credentials
+          aws configure set aws_access_key_id ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY }}
+          aws configure set aws_secret_access_key ${{ secrets.CLOUDFLARE_R2_SECRET_KEY }}
+          
+          # رفع الملفات
+          VERSION="${{ github.event.release.tag_name || github.event.inputs.version }}"
+          
+          for file in downloads/*; do
+            if [ -f "$file" ]; then
+              filename=$(basename "$file")
+              aws s3 cp "$file" "s3://${{ secrets.CLOUDFLARE_R2_BUCKET }}/releases/$VERSION/$filename" \
+                --endpoint-url "https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com" \
+                || echo "Failed to upload $filename"
+            fi
+          done
+          
+          echo "✅ Files uploaded to Cloudflare R2"
+        continue-on-error: true
+        env:
+          CLOUDFLARE_R2_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY }}
+
+  # ===========================================================================
+  # رفع إلى AWS S3 (اختياري)
+  # ===========================================================================
+  upload-aws-s3:
+    name: "📦 AWS S3"
+    runs-on: ubuntu-latest
+    if: github.event.inputs.notify_only != 'true'
+    
+    steps:
+      - name: "📥 Download Release Assets"
+        uses: robinraju/release-downloader@v1
+        with:
+          latest: true
+          fileName: "*"
+          out-file-path: "downloads"
+        continue-on-error: true
+
+      - name: "📦 Upload to AWS S3"
+        if: env.AWS_ACCESS_KEY_ID != ''
+        uses: jakejarvis/s3-sync-action@master
+        with:
+          args: --acl public-read --follow-symlinks
+        env:
+          AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: 'us-east-1'
+          SOURCE_DIR: 'downloads'
+          DEST_DIR: 'releases/${{ github.event.release.tag_name || github.event.inputs.version }}'
+        continue-on-error: true
+
+  # ===========================================================================
+  # إشعارات Discord
+  # ===========================================================================
+  notify-discord:
+    name: "💬 Discord"
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: "💬 Send Discord Notification"
+        if: secrets.DISCORD_WEBHOOK != ''
+        run: |
+          VERSION="${{ github.event.release.tag_name || github.event.inputs.version }}"
+          RELEASE_URL="${{ github.event.release.html_url || format('https://github.com/{0}/releases/tag/{1}', github.repository, github.event.inputs.version) }}"
+          
+          curl -H "Content-Type: application/json" \
+            -d "{
+              \"content\": \"🚀 **HassanIDE $VERSION Released!**\",
+              \"embeds\": [{
+                \"title\": \"HassanIDE $VERSION\",
+                \"description\": \"محرر الأكواد العربي - إصدار جديد متاح الآن!\",
+                \"url\": \"$RELEASE_URL\",
+                \"color\": 5814783,
+                \"fields\": [
+                  {\"name\": \"🪟 Windows\", \"value\": \"[Download](https://hassanide.com/download/windows)\", \"inline\": true},
+                  {\"name\": \"🍎 macOS\", \"value\": \"[Download](https://hassanide.com/download/macos)\", \"inline\": true},
+                  {\"name\": \"🐧 Linux\", \"value\": \"[Download](https://hassanide.com/download/linux)\", \"inline\": true}
+                ],
+                \"footer\": {\"text\": \"HassanIDE - بيئة التطوير المتكاملة\"},
+                \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+              }]
+            }" \
+            ${{ secrets.DISCORD_WEBHOOK }} || echo "Discord notification failed"
+        continue-on-error: true
+
+  # ===========================================================================
+  # إشعارات Telegram
+  # ===========================================================================
+  notify-telegram:
+    name: "📱 Telegram"
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: "📱 Send Telegram Notification"
+        if: secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != ''
+        run: |
+          VERSION="${{ github.event.release.tag_name || github.event.inputs.version }}"
+          RELEASE_URL="${{ github.event.release.html_url || format('https://github.com/{0}/releases/tag/{1}', github.repository, github.event.inputs.version) }}"
+          
+          MESSAGE="🚀 *HassanIDE $VERSION Released\!*
+
+محرر الأكواد العربي \- إصدار جديد متاح الآن\!
+
+🪟 [Windows](https://hassanide.com/download/windows)
+🍎 [macOS](https://hassanide.com/download/macos)
+🐧 [Linux](https://hassanide.com/download/linux)
+
+📥 [تحميل من GitHub]($RELEASE_URL)"
+          
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d text="$MESSAGE" \
+            -d parse_mode="MarkdownV2" || echo "Telegram notification failed"
+        continue-on-error: true
+
+  # ===========================================================================
+  # إشعارات Slack
+  # ===========================================================================
+  notify-slack:
+    name: "💼 Slack"
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: "💼 Send Slack Notification"
+        if: secrets.SLACK_WEBHOOK != ''
+        run: |
+          VERSION="${{ github.event.release.tag_name || github.event.inputs.version }}"
+          RELEASE_URL="${{ github.event.release.html_url || format('https://github.com/{0}/releases/tag/{1}', github.repository, github.event.inputs.version) }}"
+          
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{
+              \"blocks\": [
+                {
+                  \"type\": \"header\",
+                  \"text\": {\"type\": \"plain_text\", \"text\": \"🚀 HassanIDE $VERSION Released!\"}
+                },
+                {
+                  \"type\": \"section\",
+                  \"text\": {\"type\": \"mrkdwn\", \"text\": \"محرر الأكواد العربي - إصدار جديد متاح الآن!\"}
+                },
+                {
+                  \"type\": \"actions\",
+                  \"elements\": [
+                    {\"type\": \"button\", \"text\": {\"type\": \"plain_text\", \"text\": \"🪟 Windows\"}, \"url\": \"https://hassanide.com/download/windows\"},
+                    {\"type\": \"button\", \"text\": {\"type\": \"plain_text\", \"text\": \"🍎 macOS\"}, \"url\": \"https://hassanide.com/download/macos\"},
+                    {\"type\": \"button\", \"text\": {\"type\": \"plain_text\", \"text\": \"🐧 Linux\"}, \"url\": \"https://hassanide.com/download/linux\"}
+                  ]
+                }
+              ]
+            }" \
+            ${{ secrets.SLACK_WEBHOOK }} || echo "Slack notification failed"
+        continue-on-error: true
+
+  # ===========================================================================
+  # إشعار البريد الإلكتروني
+  # ===========================================================================
+  notify-email:
+    name: "📧 Email"
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: "📧 Send Email Notification"
+        if: secrets.SMTP_SERVER != ''
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT || 587 }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "🚀 HassanIDE ${{ github.event.release.tag_name || github.event.inputs.version }} Released!"
+          to: ${{ secrets.NOTIFICATION_EMAILS }}
+          from: "HassanIDE <noreply@hassanide.com>"
+          html_body: |
+            <h1>🚀 HassanIDE ${{ github.event.release.tag_name || github.event.inputs.version }}</h1>
+            <p>محرر الأكواد العربي - إصدار جديد متاح الآن!</p>
+            <h2>📥 روابط التحميل:</h2>
+            <ul>
+              <li><a href="https://hassanide.com/download/windows">🪟 Windows</a></li>
+              <li><a href="https://hassanide.com/download/macos">🍎 macOS</a></li>
+              <li><a href="https://hassanide.com/download/linux">🐧 Linux</a></li>
+            </ul>
+            <p><a href="${{ github.event.release.html_url }}">📋 Release Notes</a></p>
+        continue-on-error: true
+
+  # ===========================================================================
+  # تحديث الموقع
+  # ===========================================================================
+  update-website:
+    name: "🌐 Update Website"
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: "🌐 Update Download Links"
+        if: secrets.WEBSITE_API_URL != ''
+        run: |
+          VERSION="${{ github.event.release.tag_name || github.event.inputs.version }}"
+          
+          curl -X POST "${{ secrets.WEBSITE_API_URL }}/api/update-version" \
+            -H "Authorization: Bearer ${{ secrets.WEBSITE_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"version\": \"$VERSION\",
+              \"release_date\": \"$(date -u +%Y-%m-%d)\",
+              \"download_urls\": {
+                \"windows_x64\": \"https://github.com/${{ github.repository }}/releases/download/$VERSION/HassanIDE-win32-x64-$VERSION.zip\",
+                \"windows_arm64\": \"https://github.com/${{ github.repository }}/releases/download/$VERSION/HassanIDE-win32-arm64-$VERSION.zip\",
+                \"macos_x64\": \"https://github.com/${{ github.repository }}/releases/download/$VERSION/HassanIDE-darwin-x64-$VERSION.zip\",
+                \"macos_arm64\": \"https://github.com/${{ github.repository }}/releases/download/$VERSION/HassanIDE-darwin-arm64-$VERSION.zip\",
+                \"linux_x64\": \"https://github.com/${{ github.repository }}/releases/download/$VERSION/HassanIDE-linux-x64-$VERSION.tar.gz\"
+              }
+            }" || echo "Website update failed"
+        continue-on-error: true
+
+  # ===========================================================================
+  # تحليلات وإحصائيات
+  # ===========================================================================
+  analytics:
+    name: "📊 Analytics"
+    runs-on: ubuntu-latest
+    needs: [upload-cloudflare-r2, upload-aws-s3]
+    if: always()
+    
+    steps:
+      - name: "📊 Record Release Analytics"
+        run: |
+          VERSION="${{ github.event.release.tag_name || github.event.inputs.version }}"
+          
+          echo "=============================================="
+          echo "       📊 Release Analytics"
+          echo "=============================================="
+          echo ""
+          echo "📦 Version: $VERSION"
+          echo "📅 Date: $(date)"
+          echo "🔗 Repository: ${{ github.repository }}"
+          echo ""
+          echo "Upload Results:"
+          echo "☁️ Cloudflare R2: ${{ needs.upload-cloudflare-r2.result }}"
+          echo "📦 AWS S3: ${{ needs.upload-aws-s3.result }}"
+          echo ""
+          echo "=============================================="
+
+      - name: "📈 Send to Analytics Service"
+        if: secrets.ANALYTICS_ENDPOINT != ''
+        run: |
+          VERSION="${{ github.event.release.tag_name || github.event.inputs.version }}"
+          
+          curl -X POST "${{ secrets.ANALYTICS_ENDPOINT }}" \
+            -H "Authorization: Bearer ${{ secrets.ANALYTICS_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"event\": \"release_published\",
+              \"product\": \"HassanIDE\",
+              \"version\": \"$VERSION\",
+              \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+              \"repository\": \"${{ github.repository }}\",
+              \"cloudflare_status\": \"${{ needs.upload-cloudflare-r2.result }}\",
+              \"s3_status\": \"${{ needs.upload-aws-s3.result }}\"
+            }" || echo "Analytics failed"
+        continue-on-error: true

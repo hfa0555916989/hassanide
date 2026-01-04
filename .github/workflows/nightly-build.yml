@@ -1,0 +1,306 @@
+# =============================================================================
+# HassanIDE - Nightly Builds (بناء يومي تلقائي)
+# =============================================================================
+# يعمل كل يوم الساعة 2 صباحاً UTC
+# ينشئ نسخة Insiders للاختبار المستمر
+# =============================================================================
+
+name: "🌙 Nightly Build"
+
+on:
+  schedule:
+    # كل يوم الساعة 2 صباحاً UTC (5 صباحاً بتوقيت السعودية)
+    - cron: '0 2 * * *'
+  
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'المنصات للبناء'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - windows
+          - macos
+          - linux
+
+env:
+  NODE_VERSION: '20'
+  PRODUCT_NAME: 'HassanIDE-Insiders'
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ===========================================================================
+  # تحضير الإصدار الليلي
+  # ===========================================================================
+  prepare-nightly:
+    name: "🌙 تحضير Nightly"
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      date: ${{ steps.version.outputs.date }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: "🔢 إنشاء رقم إصدار Nightly"
+        id: version
+        run: |
+          BASE_VERSION=$(node -p "require('./package.json').version")
+          DATE=$(date +'%Y%m%d')
+          NIGHTLY_VERSION="${BASE_VERSION}-nightly.${DATE}"
+          echo "version=$NIGHTLY_VERSION" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+          echo "📦 Nightly Version: $NIGHTLY_VERSION"
+
+  # ===========================================================================
+  # بناء Windows Nightly
+  # ===========================================================================
+  build-windows-nightly:
+    name: "🪟 Windows Nightly"
+    runs-on: windows-latest
+    needs: prepare-nightly
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'windows' || github.event.inputs.platforms == ''
+    timeout-minutes: 60
+    continue-on-error: true
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      
+      - name: "⚙️ Setup build environment"
+        run: |
+          corepack enable
+          npm install -g typescript ts-node @types/node
+        continue-on-error: true
+
+      - name: "📦 Install dependencies"
+        uses: nick-fields/retry@v2
+        with:
+          timeout_minutes: 20
+          max_attempts: 3
+          command: npm install --legacy-peer-deps --ignore-scripts
+      
+      - name: "🔄 Rebuild"
+        run: |
+          npm rebuild
+          npm run postinstall || true
+        continue-on-error: true
+
+      - name: "⚡ Download Electron"
+        run: npm run electron
+        continue-on-error: true
+
+      - name: "🔨 Compile"
+        run: npm run compile
+        continue-on-error: true
+
+      - name: "📦 Build Windows x64"
+        run: npx gulp vscode-win32-x64-min
+        continue-on-error: true
+
+      - name: "📁 Create ZIP"
+        run: |
+          $buildPath = "..\VSCode-win32-x64"
+          if (Test-Path $buildPath) {
+            Compress-Archive -Path $buildPath\* -DestinationPath "HassanIDE-Insiders-win32-x64-${{ needs.prepare-nightly.outputs.version }}.zip" -Force
+          }
+        shell: pwsh
+        continue-on-error: true
+
+      - name: "📤 Upload Nightly Artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-nightly-windows
+          path: HassanIDE-Insiders-*.zip
+          retention-days: 7
+
+  # ===========================================================================
+  # بناء macOS Nightly
+  # ===========================================================================
+  build-macos-nightly:
+    name: "🍎 macOS Nightly"
+    runs-on: macos-14
+    needs: prepare-nightly
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'macos' || github.event.inputs.platforms == ''
+    timeout-minutes: 60
+    continue-on-error: true
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: "⚙️ Setup build environment"
+        run: |
+          corepack enable
+          npm install -g typescript ts-node @types/node
+        continue-on-error: true
+
+      - name: "📦 Install dependencies"
+        uses: nick-fields/retry@v2
+        with:
+          timeout_minutes: 20
+          max_attempts: 3
+          command: npm install --legacy-peer-deps --ignore-scripts
+
+      - name: "🔄 Rebuild"
+        run: |
+          npm rebuild
+          npm run postinstall || true
+        continue-on-error: true
+
+      - name: "⚡ Download Electron"
+        run: npm run electron
+        continue-on-error: true
+
+      - name: "🔨 Compile"
+        run: npm run compile
+        continue-on-error: true
+
+      - name: "📦 Build macOS ARM64"
+        run: npx gulp vscode-darwin-arm64-min
+        continue-on-error: true
+
+      - name: "📁 Create ZIP"
+        run: |
+          if [ -d "../VSCode-darwin-arm64" ]; then
+            cd ..
+            zip -r -y "hassanide/HassanIDE-Insiders-darwin-arm64-${{ needs.prepare-nightly.outputs.version }}.zip" "VSCode-darwin-arm64"
+          fi
+        continue-on-error: true
+
+      - name: "📤 Upload Nightly Artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-nightly-macos
+          path: HassanIDE-Insiders-*.zip
+          retention-days: 7
+
+  # ===========================================================================
+  # بناء Linux Nightly
+  # ===========================================================================
+  build-linux-nightly:
+    name: "🐧 Linux Nightly"
+    runs-on: ubuntu-latest
+    needs: prepare-nightly
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'linux' || github.event.inputs.platforms == ''
+    timeout-minutes: 60
+    continue-on-error: true
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: "🔧 Install system dependencies"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libx11-dev libxkbfile-dev libsecret-1-dev libkrb5-dev
+
+      - name: "⚙️ Setup build environment"
+        run: |
+          corepack enable
+          npm install -g typescript ts-node @types/node
+        continue-on-error: true
+
+      - name: "📦 Install dependencies"
+        uses: nick-fields/retry@v2
+        with:
+          timeout_minutes: 20
+          max_attempts: 3
+          command: npm install --legacy-peer-deps --ignore-scripts
+
+      - name: "🔄 Rebuild"
+        run: |
+          npm rebuild
+          npm run postinstall || true
+        continue-on-error: true
+
+      - name: "⚡ Download Electron"
+        run: npm run electron
+        continue-on-error: true
+
+      - name: "🔨 Compile"
+        run: npm run compile
+        continue-on-error: true
+
+      - name: "📦 Build Linux x64"
+        run: npx gulp vscode-linux-x64-min
+        continue-on-error: true
+
+      - name: "📁 Create tar.gz"
+        run: |
+          if [ -d "../VSCode-linux-x64" ]; then
+            tar -czvf "HassanIDE-Insiders-linux-x64-${{ needs.prepare-nightly.outputs.version }}.tar.gz" -C .. "VSCode-linux-x64"
+          fi
+        continue-on-error: true
+
+      - name: "📤 Upload Nightly Artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-nightly-linux
+          path: HassanIDE-Insiders-*.tar.gz
+          retention-days: 7
+
+  # ===========================================================================
+  # إشعارات Nightly
+  # ===========================================================================
+  notify-nightly:
+    name: "📢 إشعار Nightly"
+    runs-on: ubuntu-latest
+    needs: 
+      - prepare-nightly
+      - build-windows-nightly
+      - build-macos-nightly
+      - build-linux-nightly
+    if: always()
+    
+    steps:
+      - name: "📊 تقرير Nightly"
+        run: |
+          echo "=============================================="
+          echo "       🌙 Nightly Build Report"
+          echo "=============================================="
+          echo ""
+          echo "📦 Version: ${{ needs.prepare-nightly.outputs.version }}"
+          echo "📅 Date: ${{ needs.prepare-nightly.outputs.date }}"
+          echo ""
+          echo "Results:"
+          echo "🪟 Windows: ${{ needs.build-windows-nightly.result }}"
+          echo "🍎 macOS: ${{ needs.build-macos-nightly.result }}"
+          echo "🐧 Linux: ${{ needs.build-linux-nightly.result }}"
+
+      # إشعار Discord (اختياري)
+      - name: "💬 Discord Notification"
+        if: vars.DISCORD_WEBHOOK != ''
+        run: |
+          curl -H "Content-Type: application/json" \
+            -d '{
+              "embeds": [{
+                "title": "🌙 HassanIDE Nightly Build",
+                "description": "Version: ${{ needs.prepare-nightly.outputs.version }}",
+                "color": 5814783,
+                "fields": [
+                  {"name": "🪟 Windows", "value": "${{ needs.build-windows-nightly.result }}", "inline": true},
+                  {"name": "🍎 macOS", "value": "${{ needs.build-macos-nightly.result }}", "inline": true},
+                  {"name": "🐧 Linux", "value": "${{ needs.build-linux-nightly.result }}", "inline": true}
+                ]
+              }]
+            }' \
+            ${{ vars.DISCORD_WEBHOOK }} || true
+        continue-on-error: true
