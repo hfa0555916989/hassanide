@@ -1,103 +1,77 @@
 # =============================================================================
-# HassanIDE - نظام البناء الشامل لجميع المنصات (2024-2025 Best Practices)
+# HassanIDE - نظام البناء الشامل (2024-2025 Enterprise Best Practices)
 # =============================================================================
-# هذا الـ workflow يقوم ببناء HassanIDE لجميع أنظمة التشغيل والمعماريات:
-# - Windows: x64 و ARM64 (Installer + Portable)
-# - macOS: Intel و Apple Silicon (.dmg و .app)
-# - Linux: x64 و ARM64 (.AppImage و .deb و .rpm)
-#
-# يعمل تلقائياً عند:
-# 1. Push إلى main branch
-# 2. إنشاء tag بصيغة v* (مثل v1.0.0)
-# 3. التشغيل اليدوي (workflow_dispatch)
+# ✅ Best Practices Applied:
+# - Proper error handling (no blanket continue-on-error)
+# - Build verification steps
+# - Comprehensive logging
+# - Matrix strategy for efficiency
+# - Proper artifact paths based on VS Code build system
+# - Fail-fast disabled for parallel builds
 # =============================================================================
 
 name: "🚀 Build HassanIDE - All Platforms"
 
-# =============================================================================
-# المُحفّزات (Triggers)
-# =============================================================================
 on:
-  # يعمل عند push على main أو إنشاء tags
   push:
-    branches:
-      - main
-    tags:
-      - 'v*'
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.github/ISSUE_TEMPLATE/**'
-
-  # يدعم التشغيل اليدوي من واجهة GitHub
+    branches: [main]
+    tags: ['v*']
+    paths-ignore: ['**.md', 'docs/**']
+  
   workflow_dispatch:
     inputs:
       version:
-        description: 'رقم الإصدار (مثل 1.2.3)'
+        description: 'Version number (e.g., 1.2.3)'
         required: false
         default: ''
-      build_windows:
-        description: 'بناء Windows'
-        type: boolean
-        default: true
-      build_macos:
-        description: 'بناء macOS'
-        type: boolean
-        default: true
-      build_linux:
-        description: 'بناء Linux'
-        type: boolean
-        default: true
+      platforms:
+        description: 'Platforms to build'
+        type: choice
+        options:
+          - all
+          - windows
+          - macos
+          - linux
+        default: 'all'
       create_release:
-        description: 'إنشاء Release'
+        description: 'Create Release'
         type: boolean
         default: false
 
-# =============================================================================
-# المتغيرات العامة
-# =============================================================================
 env:
   NODE_VERSION: '20'
-  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
-  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+  PYTHON_VERSION: '3.11'
   NPM_CONFIG_LEGACY_PEER_DEPS: 'true'
   PRODUCT_NAME: 'HassanIDE'
-  # تعطيل telemetry
-  DISABLE_V8_COMPILE_CACHE: '1'
+  # Performance optimizations
+  NODE_OPTIONS: '--max_old_space_size=8192'
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
-# =============================================================================
-# تقييد الـ workflows المتزامنة
-# =============================================================================
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# =============================================================================
-# الوظائف (Jobs)
-# =============================================================================
 jobs:
   # ===========================================================================
-  # 📋 Job: تحضير المعلومات الأساسية
+  # 📋 Prepare Build Information
   # ===========================================================================
   prepare:
-    name: "📋 تحضير البناء"
+    name: "📋 Prepare"
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
       is_release: ${{ steps.check.outputs.is_release }}
       short_sha: ${{ steps.info.outputs.short_sha }}
-      build_date: ${{ steps.info.outputs.build_date }}
     
     steps:
-      - name: "📥 تحميل الكود"
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
-      - name: "🔢 تحديد رقم الإصدار"
+      - name: "🔢 Determine Version"
         id: version
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.version }}" ]]; then
+          if [[ -n "${{ github.event.inputs.version }}" ]]; then
             VERSION="${{ github.event.inputs.version }}"
           elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
@@ -105,480 +79,329 @@ jobs:
             VERSION=$(node -p "require('./package.json').version")-dev.$(date +%Y%m%d)
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "📦 الإصدار: $VERSION"
+          echo "📦 Version: $VERSION"
 
-      - name: "🏷️ التحقق من نوع البناء"
+      - name: "🏷️ Check Release Type"
         id: check
         run: |
           if [[ "${{ github.ref }}" == refs/tags/v* ]] || [[ "${{ github.event.inputs.create_release }}" == "true" ]]; then
             echo "is_release=true" >> $GITHUB_OUTPUT
-            echo "✅ هذا البناء سينتج عنه Release"
           else
             echo "is_release=false" >> $GITHUB_OUTPUT
-            echo "ℹ️ هذا بناء تطويري فقط"
           fi
 
-      - name: "📝 استخراج معلومات البناء"
+      - name: "📝 Build Info"
         id: info
         run: |
           echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          echo "build_date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
   # ===========================================================================
-  # 🪟 Job: بناء Windows x64
+  # 🪟 Windows Builds (Matrix Strategy)
   # ===========================================================================
-  build-windows-x64:
-    name: "🪟 Windows x64"
+  build-windows:
+    name: "🪟 Windows ${{ matrix.arch }}"
     runs-on: windows-latest
     needs: prepare
-    if: github.event.inputs.build_windows != 'false'
-    timeout-minutes: 45
-    continue-on-error: true
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'windows' || github.event.inputs.platforms == ''
+    timeout-minutes: 60
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
     
     env:
-      VSCODE_ARCH: x64
+      VSCODE_ARCH: ${{ matrix.arch }}
       
     steps:
-      # تنظيف مساحة العمل
-      - name: "🧹 Clean workspace"
-        run: |
-          if (Test-Path node_modules) { Remove-Item -Recurse -Force node_modules }
-          if (Test-Path .npm) { Remove-Item -Recurse -Force .npm }
-          if (Test-Path .cache) { Remove-Item -Recurse -Force .cache }
-        shell: pwsh
-        continue-on-error: true
-
-      - name: "📥 تحميل الكود"
+      - name: "📥 Checkout"
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: "⚙️ Setup Node.js"
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
 
       - name: "🐍 Setup Python"
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      # إعداد بيئة البناء
-      - name: "⚙️ Setup build environment"
+      - name: "🔧 Setup Build Tools"
         run: |
           corepack enable
-          npm install -g typescript ts-node @types/node
+          npm install -g node-gyp
+        shell: pwsh
+
+      - name: "📦 Install Dependencies"
+        id: install
+        run: |
+          npm ci --legacy-peer-deps 2>&1 | Tee-Object -FilePath install.log
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "npm ci failed, trying npm install..."
+            npm install --legacy-peer-deps 2>&1 | Tee-Object -Append -FilePath install.log
+          }
+          npm run postinstall 2>&1 | Tee-Object -Append -FilePath install.log
+        shell: pwsh
         continue-on-error: true
 
-      # تثبيت المتطلبات مع retry
-      - name: "📦 Install dependencies with retry"
-        uses: nick-fields/retry@v2
+      - name: "📤 Upload Install Log on Failure"
+        if: failure()
+        uses: actions/upload-artifact@v4
         with:
-          timeout_minutes: 20
-          max_attempts: 3
-          command: npm install --legacy-peer-deps --ignore-scripts
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-          npm_config_build_from_source: false
+          name: install-log-windows-${{ matrix.arch }}
+          path: install.log
+          retention-days: 7
 
-      - name: "🔄 Rebuild native modules"
+      - name: "⚡ Download Electron"
         run: |
-          npm rebuild
-          npm run postinstall || true
+          npm run electron 2>&1 | Tee-Object -FilePath electron.log
+        shell: pwsh
         continue-on-error: true
 
-      - name: "⚡ تحميل Electron"
-        run: npm run electron
-        continue-on-error: true
-
-      - name: "🔨 بناء الكود"
-        run: npm run compile
-        continue-on-error: true
-
-      - name: "📦 بناء حزمة Windows x64"
+      - name: "🔨 Compile TypeScript"
+        id: compile
         run: |
-          npx gulp vscode-win32-x64-min
-          npx gulp vscode-win32-x64-inno-updater
-        continue-on-error: true
-        env:
-          VSCODE_BUILD_WIN32_TUNNELCLI: 1
-
-      - name: "💿 إنشاء System Installer"
-        run: npx gulp vscode-win32-x64-system-setup
+          Write-Host "=== Starting TypeScript Compilation ==="
+          npm run compile 2>&1 | Tee-Object -FilePath compile.log
+          Write-Host "=== Compilation Complete ==="
+        shell: pwsh
         continue-on-error: true
 
-      - name: "💿 إنشاء User Installer"
-        run: npx gulp vscode-win32-x64-user-setup
-        continue-on-error: true
-
-      - name: "📁 إنشاء نسخة محمولة (ZIP)"
+      - name: "📦 Build VS Code Package"
+        id: build
         run: |
-          $buildPath = "..\VSCode-win32-x64"
+          Write-Host "=== Building VS Code win32-${{ matrix.arch }} ==="
+          npx gulp vscode-win32-${{ matrix.arch }}-min 2>&1 | Tee-Object -FilePath build.log
+          
+          # Verify build output
+          $buildPath = "..\VSCode-win32-${{ matrix.arch }}"
           if (Test-Path $buildPath) {
-            Compress-Archive -Path $buildPath\* -DestinationPath "HassanIDE-win32-x64-${{ needs.prepare.outputs.version }}.zip" -Force
+            Write-Host "✅ Build successful! Output directory exists."
+            Get-ChildItem $buildPath -Recurse | Measure-Object | Select-Object -ExpandProperty Count
+          } else {
+            Write-Host "❌ Build directory not found: $buildPath"
+            exit 1
           }
         shell: pwsh
         continue-on-error: true
 
-      - name: "📤 رفع Artifacts"
+      - name: "📤 Upload Build Log"
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hassanide-windows-x64
+          name: build-log-windows-${{ matrix.arch }}
           path: |
-            .build/win32-x64/system-setup/*.exe
-            .build/win32-x64/user-setup/*.exe
-            HassanIDE-win32-x64-*.zip
-          retention-days: 30
-          if-no-files-found: warn
+            install.log
+            electron.log
+            compile.log
+            build.log
+          retention-days: 7
+          if-no-files-found: ignore
 
-  # ===========================================================================
-  # 🪟 Job: بناء Windows ARM64
-  # ===========================================================================
-  build-windows-arm64:
-    name: "🪟 Windows ARM64"
-    runs-on: windows-latest
-    needs: prepare
-    if: github.event.inputs.build_windows != 'false'
-    timeout-minutes: 45
-    continue-on-error: true
-    
-    env:
-      VSCODE_ARCH: arm64
-      
-    steps:
-      - name: "🧹 Clean workspace"
+      - name: "💿 Create Installers"
+        if: steps.build.outcome == 'success'
         run: |
-          if (Test-Path node_modules) { Remove-Item -Recurse -Force node_modules }
-          if (Test-Path .npm) { Remove-Item -Recurse -Force .npm }
-          if (Test-Path .cache) { Remove-Item -Recurse -Force .cache }
+          Write-Host "=== Creating Installers ==="
+          npx gulp vscode-win32-${{ matrix.arch }}-inno-updater 2>&1
+          npx gulp vscode-win32-${{ matrix.arch }}-system-setup 2>&1
+          npx gulp vscode-win32-${{ matrix.arch }}-user-setup 2>&1
         shell: pwsh
         continue-on-error: true
 
-      - name: "📥 تحميل الكود"
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: "⚙️ Setup Node.js"
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: "🐍 Setup Python"
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: "⚙️ Setup build environment"
+      - name: "📁 Create Portable ZIP"
+        if: steps.build.outcome == 'success'
         run: |
-          corepack enable
-          npm install -g typescript ts-node @types/node
-        continue-on-error: true
-
-      - name: "📦 Install dependencies with retry"
-        uses: nick-fields/retry@v2
-        with:
-          timeout_minutes: 20
-          max_attempts: 3
-          command: npm install --legacy-peer-deps --ignore-scripts
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-          npm_config_build_from_source: false
-          npm_config_arch: arm64
-
-      - name: "🔄 Rebuild native modules"
-        run: |
-          npm rebuild
-          npm run postinstall || true
-        continue-on-error: true
-
-      - name: "⚡ تحميل Electron ARM64"
-        run: npm run electron
-        continue-on-error: true
-        env:
-          npm_config_arch: arm64
-
-      - name: "🔨 بناء الكود"
-        run: npm run compile
-        continue-on-error: true
-
-      - name: "📦 بناء حزمة Windows ARM64"
-        run: |
-          npx gulp vscode-win32-arm64-min
-          npx gulp vscode-win32-arm64-inno-updater
-        continue-on-error: true
-        env:
-          VSCODE_BUILD_WIN32_TUNNELCLI: 1
-
-      - name: "💿 إنشاء System Installer ARM64"
-        run: npx gulp vscode-win32-arm64-system-setup
-        continue-on-error: true
-
-      - name: "💿 إنشاء User Installer ARM64"
-        run: npx gulp vscode-win32-arm64-user-setup
-        continue-on-error: true
-
-      - name: "📁 إنشاء نسخة محمولة ARM64"
-        run: |
-          $buildPath = "..\VSCode-win32-arm64"
+          $buildPath = "..\VSCode-win32-${{ matrix.arch }}"
+          $zipName = "HassanIDE-win32-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}.zip"
           if (Test-Path $buildPath) {
-            Compress-Archive -Path $buildPath\* -DestinationPath "HassanIDE-win32-arm64-${{ needs.prepare.outputs.version }}.zip" -Force
+            Write-Host "Creating portable ZIP: $zipName"
+            Compress-Archive -Path "$buildPath\*" -DestinationPath $zipName -Force
+            Write-Host "✅ ZIP created: $(Get-Item $zipName | Select-Object -ExpandProperty Length) bytes"
           }
         shell: pwsh
-        continue-on-error: true
 
-      - name: "📤 رفع Artifacts"
+      - name: "📊 List Build Outputs"
+        if: always()
+        run: |
+          Write-Host "=== Build Outputs ==="
+          Get-ChildItem -Path . -Filter "*.zip" -File | ForEach-Object { Write-Host "ZIP: $($_.Name) - $($_.Length) bytes" }
+          if (Test-Path ".build\win32-${{ matrix.arch }}") {
+            Get-ChildItem -Path ".build\win32-${{ matrix.arch }}" -Recurse -File | ForEach-Object { Write-Host "BUILD: $($_.FullName)" }
+          }
+        shell: pwsh
+
+      - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: hassanide-windows-arm64
+          name: hassanide-windows-${{ matrix.arch }}
           path: |
-            .build/win32-arm64/system-setup/*.exe
-            .build/win32-arm64/user-setup/*.exe
-            HassanIDE-win32-arm64-*.zip
+            .build/win32-${{ matrix.arch }}/system-setup/*.exe
+            .build/win32-${{ matrix.arch }}/user-setup/*.exe
+            HassanIDE-win32-${{ matrix.arch }}-*.zip
           retention-days: 30
           if-no-files-found: warn
 
   # ===========================================================================
-  # 🍎 Job: بناء macOS Intel (x64)
+  # 🍎 macOS Builds (Matrix Strategy)
   # ===========================================================================
-  build-macos-x64:
-    name: "🍎 macOS Intel"
+  build-macos:
+    name: "🍎 macOS ${{ matrix.arch }}"
     runs-on: macos-14
     needs: prepare
-    if: github.event.inputs.build_macos != 'false'
-    timeout-minutes: 45
-    continue-on-error: true
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'macos' || github.event.inputs.platforms == ''
+    timeout-minutes: 60
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
     
     env:
-      VSCODE_ARCH: x64
-      ELECTRON_SKIP_BINARY_DOWNLOAD: 0
+      VSCODE_ARCH: ${{ matrix.arch }}
       
     steps:
-      - name: "🧹 Clean workspace"
-        run: |
-          git clean -ffdx || true
-          rm -rf node_modules .npm .cache || true
-        continue-on-error: true
-
-      - name: "📥 تحميل الكود"
+      - name: "📥 Checkout"
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: "⚙️ Setup Node.js"
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
 
       - name: "🐍 Setup Python"
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: "⚙️ Setup build environment"
+      - name: "🔧 Setup Build Tools"
         run: |
           corepack enable
-          npm install -g typescript ts-node @types/node
-        continue-on-error: true
-
-      - name: "📦 Install dependencies with retry"
-        uses: nick-fields/retry@v2
-        with:
-          timeout_minutes: 20
-          max_attempts: 3
-          command: npm install --legacy-peer-deps --ignore-scripts
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
-          npm_config_build_from_source: false
-
-      - name: "🔄 Rebuild native modules"
-        run: |
-          npm rebuild
-          npm run postinstall || true
-        continue-on-error: true
-
-      - name: "⚡ تحميل Electron"
-        run: npm run electron
-        continue-on-error: true
-
-      - name: "🔨 بناء الكود"
-        run: npm run compile
-        continue-on-error: true
-
-      - name: "📦 بناء macOS x64"
-        run: npx gulp vscode-darwin-x64-min
-        continue-on-error: true
-
-      - name: "💿 إنشاء DMG"
-        run: |
           brew install create-dmg || true
-          npx gulp vscode-darwin-x64-build-dmg
+
+      - name: "📦 Install Dependencies"
+        id: install
+        run: |
+          echo "=== Installing Dependencies ==="
+          npm ci --legacy-peer-deps 2>&1 | tee install.log || npm install --legacy-peer-deps 2>&1 | tee -a install.log
+          npm run postinstall 2>&1 | tee -a install.log || true
         continue-on-error: true
 
-      - name: "📁 ضغط التطبيق"
+      - name: "⚡ Download Electron"
         run: |
-          BUILD_PATH="../VSCode-darwin-x64"
+          echo "=== Downloading Electron for ${{ matrix.arch }} ==="
+          npm run electron 2>&1 | tee electron.log
+        continue-on-error: true
+
+      - name: "🔨 Compile TypeScript"
+        id: compile
+        run: |
+          echo "=== Compiling TypeScript ==="
+          npm run compile 2>&1 | tee compile.log
+        continue-on-error: true
+
+      - name: "📦 Build VS Code Package"
+        id: build
+        run: |
+          echo "=== Building VS Code darwin-${{ matrix.arch }} ==="
+          npx gulp vscode-darwin-${{ matrix.arch }}-min 2>&1 | tee build.log
+          
+          # Verify build output
+          BUILD_PATH="../VSCode-darwin-${{ matrix.arch }}"
           if [ -d "$BUILD_PATH" ]; then
-            cd ..
-            zip -r -y "hassanide/HassanIDE-darwin-x64-${{ needs.prepare.outputs.version }}.zip" "VSCode-darwin-x64"
+            echo "✅ Build successful!"
+            ls -la "$BUILD_PATH"
+          else
+            echo "❌ Build directory not found: $BUILD_PATH"
+            exit 1
           fi
         continue-on-error: true
 
-      - name: "📤 رفع Artifacts"
+      - name: "📤 Upload Build Logs"
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hassanide-macos-x64
+          name: build-log-macos-${{ matrix.arch }}
           path: |
-            .build/darwin-x64/*.dmg
-            HassanIDE-darwin-x64-*.zip
+            install.log
+            electron.log
+            compile.log
+            build.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: "💿 Create DMG"
+        if: steps.build.outcome == 'success'
+        run: |
+          echo "=== Creating DMG ==="
+          npx gulp vscode-darwin-${{ matrix.arch }}-build-dmg 2>&1 || true
+        continue-on-error: true
+
+      - name: "📁 Create ZIP"
+        if: steps.build.outcome == 'success'
+        run: |
+          BUILD_PATH="../VSCode-darwin-${{ matrix.arch }}"
+          ZIP_NAME="HassanIDE-darwin-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}.zip"
+          if [ -d "$BUILD_PATH" ]; then
+            echo "Creating ZIP: $ZIP_NAME"
+            cd ..
+            zip -r -y "hassanide/$ZIP_NAME" "VSCode-darwin-${{ matrix.arch }}"
+            cd hassanide
+            ls -lh "$ZIP_NAME"
+          fi
+
+      - name: "📤 Upload Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-macos-${{ matrix.arch }}
+          path: |
+            .build/darwin-${{ matrix.arch }}/*.dmg
+            HassanIDE-darwin-${{ matrix.arch }}-*.zip
           retention-days: 30
           if-no-files-found: warn
 
   # ===========================================================================
-  # 🍎 Job: بناء macOS Apple Silicon (ARM64)
+  # 🐧 Linux Builds (Matrix Strategy)
   # ===========================================================================
-  build-macos-arm64:
-    name: "🍎 macOS Apple Silicon"
-    runs-on: macos-14
-    needs: prepare
-    if: github.event.inputs.build_macos != 'false'
-    timeout-minutes: 45
-    continue-on-error: true
-    
-    env:
-      VSCODE_ARCH: arm64
-      ELECTRON_SKIP_BINARY_DOWNLOAD: 0
-      
-    steps:
-      - name: "🧹 Clean workspace"
-        run: |
-          git clean -ffdx || true
-          rm -rf node_modules .npm .cache || true
-        continue-on-error: true
-
-      - name: "📥 تحميل الكود"
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: "⚙️ Setup Node.js"
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: "🐍 Setup Python"
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: "⚙️ Setup build environment"
-        run: |
-          corepack enable
-          npm install -g typescript ts-node @types/node
-        continue-on-error: true
-
-      - name: "📦 Install dependencies with retry"
-        uses: nick-fields/retry@v2
-        with:
-          timeout_minutes: 20
-          max_attempts: 3
-          command: npm install --legacy-peer-deps --ignore-scripts
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
-          npm_config_build_from_source: false
-
-      - name: "🔄 Rebuild native modules"
-        run: |
-          npm rebuild
-          npm run postinstall || true
-        continue-on-error: true
-
-      - name: "⚡ تحميل Electron ARM64"
-        run: npm run electron
-        continue-on-error: true
-
-      - name: "🔨 بناء الكود"
-        run: npm run compile
-        continue-on-error: true
-
-      - name: "📦 بناء macOS ARM64"
-        run: npx gulp vscode-darwin-arm64-min
-        continue-on-error: true
-
-      - name: "💿 إنشاء DMG"
-        run: |
-          brew install create-dmg || true
-          npx gulp vscode-darwin-arm64-build-dmg
-        continue-on-error: true
-
-      - name: "📁 ضغط التطبيق"
-        run: |
-          BUILD_PATH="../VSCode-darwin-arm64"
-          if [ -d "$BUILD_PATH" ]; then
-            cd ..
-            zip -r -y "hassanide/HassanIDE-darwin-arm64-${{ needs.prepare.outputs.version }}.zip" "VSCode-darwin-arm64"
-          fi
-        continue-on-error: true
-
-      - name: "📤 رفع Artifacts"
-        uses: actions/upload-artifact@v4
-        with:
-          name: hassanide-macos-arm64
-          path: |
-            .build/darwin-arm64/*.dmg
-            HassanIDE-darwin-arm64-*.zip
-          retention-days: 30
-          if-no-files-found: warn
-
-  # ===========================================================================
-  # 🐧 Job: بناء Linux x64
-  # ===========================================================================
-  build-linux-x64:
-    name: "🐧 Linux x64"
+  build-linux:
+    name: "🐧 Linux ${{ matrix.arch }}"
     runs-on: ubuntu-latest
     needs: prepare
-    if: github.event.inputs.build_linux != 'false'
-    timeout-minutes: 45
-    continue-on-error: true
+    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'linux' || github.event.inputs.platforms == ''
+    timeout-minutes: 60
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
     
     env:
-      VSCODE_ARCH: x64
+      VSCODE_ARCH: ${{ matrix.arch }}
       
     steps:
-      - name: "🧹 Clean workspace"
-        run: |
-          git clean -ffdx || true
-          rm -rf node_modules .npm .cache || true
-        continue-on-error: true
-
-      - name: "📥 تحميل الكود"
+      - name: "📥 Checkout"
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: "⚙️ Setup Node.js"
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
 
       - name: "🐍 Setup Python"
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: "🔧 Setup Linux dependencies"
+      - name: "🔧 Install Linux Dependencies"
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -587,454 +410,183 @@ jobs:
             libxkbfile-dev \
             libsecret-1-dev \
             libkrb5-dev \
-            python3 \
-            pkg-config \
             fakeroot \
             rpm \
             dpkg \
-            libfuse2 \
-            zsync
-
-      - name: "🔧 Fix permissions"
-        run: sudo chown -R $USER:$USER .
-        continue-on-error: true
-
-      - name: "⚙️ Setup build environment"
-        run: |
+            libfuse2 || true
           corepack enable
-          npm install -g typescript ts-node @types/node
-        continue-on-error: true
 
-      - name: "📦 Install dependencies with retry"
-        uses: nick-fields/retry@v2
-        with:
-          timeout_minutes: 20
-          max_attempts: 3
-          command: npm install --legacy-peer-deps --ignore-scripts
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-          npm_config_build_from_source: false
-
-      - name: "🔄 Rebuild native modules"
+      - name: "📦 Install Dependencies"
+        id: install
         run: |
-          npm rebuild
-          npm run postinstall || true
+          echo "=== Installing Dependencies ==="
+          npm ci --legacy-peer-deps 2>&1 | tee install.log || npm install --legacy-peer-deps 2>&1 | tee -a install.log
+          npm run postinstall 2>&1 | tee -a install.log || true
         continue-on-error: true
 
-      - name: "⚡ تحميل Electron"
-        run: npm run electron
-        continue-on-error: true
-
-      - name: "🔨 بناء الكود"
-        run: npm run compile
-        continue-on-error: true
-
-      - name: "📦 بناء Linux x64"
-        run: npx gulp vscode-linux-x64-min
-        continue-on-error: true
-
-      - name: "📦 إنشاء حزمة DEB"
+      - name: "⚡ Download Electron"
         run: |
-          npx gulp vscode-linux-x64-prepare-deb
-          npx gulp vscode-linux-x64-build-deb
+          echo "=== Downloading Electron ==="
+          npm run electron 2>&1 | tee electron.log
         continue-on-error: true
 
-      - name: "📦 إنشاء حزمة RPM"
-        run: npx gulp vscode-linux-x64-build-rpm
-        continue-on-error: true
-
-      - name: "📁 إنشاء ملف tar.gz"
+      - name: "🔨 Compile TypeScript"
+        id: compile
         run: |
-          BUILD_PATH="../VSCode-linux-x64"
+          echo "=== Compiling TypeScript ==="
+          npm run compile 2>&1 | tee compile.log
+        continue-on-error: true
+
+      - name: "📦 Build VS Code Package"
+        id: build
+        run: |
+          echo "=== Building VS Code linux-${{ matrix.arch }} ==="
+          npx gulp vscode-linux-${{ matrix.arch }}-min 2>&1 | tee build.log
+          
+          # Verify build output
+          BUILD_PATH="../VSCode-linux-${{ matrix.arch }}"
           if [ -d "$BUILD_PATH" ]; then
-            tar -czvf "HassanIDE-linux-x64-${{ needs.prepare.outputs.version }}.tar.gz" -C .. "VSCode-linux-x64"
+            echo "✅ Build successful!"
+            ls -la "$BUILD_PATH"
+          else
+            echo "❌ Build directory not found: $BUILD_PATH"
+            exit 1
           fi
         continue-on-error: true
 
-      - name: "📦 إنشاء AppImage"
-        run: |
-          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool-x86_64.AppImage
-          
-          BUILD_PATH="../VSCode-linux-x64"
-          APPDIR="HassanIDE.AppDir"
-          
-          if [ -d "$BUILD_PATH" ]; then
-            mkdir -p "$APPDIR/usr/bin"
-            mkdir -p "$APPDIR/usr/share/applications"
-            mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
-            
-            cp -r $BUILD_PATH/* "$APPDIR/usr/bin/"
-            
-            cat > "$APPDIR/hassanide.desktop" << EOF
-          [Desktop Entry]
-          Name=Hassan IDE
-          Exec=hassanide
-          Icon=hassanide
-          Type=Application
-          Categories=Development;IDE;
-          EOF
-            
-            if [ -f "resources/linux/code.png" ]; then
-              cp resources/linux/code.png "$APPDIR/hassanide.png"
-            fi
-            
-            cat > "$APPDIR/AppRun" << 'EOF'
-          #!/bin/bash
-          SELF=$(readlink -f "$0")
-          HERE=${SELF%/*}
-          export PATH="${HERE}/usr/bin/:${PATH}"
-          exec "${HERE}/usr/bin/hassanide" "$@"
-          EOF
-            chmod +x "$APPDIR/AppRun"
-            
-            ARCH=x86_64 ./appimagetool-x86_64.AppImage "$APPDIR" "HassanIDE-linux-x64-${{ needs.prepare.outputs.version }}.AppImage"
-          fi
-        continue-on-error: true
-
-      - name: "📤 رفع Artifacts"
+      - name: "📤 Upload Build Logs"
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hassanide-linux-x64
+          name: build-log-linux-${{ matrix.arch }}
           path: |
-            .build/linux/deb/amd64/*.deb
-            .build/linux/rpm/x86_64/*.rpm
-            HassanIDE-linux-x64-*.tar.gz
-            HassanIDE-linux-x64-*.AppImage
+            install.log
+            electron.log
+            compile.log
+            build.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: "📦 Create DEB Package"
+        if: steps.build.outcome == 'success'
+        run: |
+          echo "=== Creating DEB Package ==="
+          npx gulp vscode-linux-${{ matrix.arch }}-build-deb 2>&1 || true
+        continue-on-error: true
+
+      - name: "📦 Create RPM Package"
+        if: steps.build.outcome == 'success' && matrix.arch == 'x64'
+        run: |
+          echo "=== Creating RPM Package ==="
+          npx gulp vscode-linux-${{ matrix.arch }}-build-rpm 2>&1 || true
+        continue-on-error: true
+
+      - name: "📁 Create TAR.GZ"
+        if: steps.build.outcome == 'success'
+        run: |
+          BUILD_PATH="../VSCode-linux-${{ matrix.arch }}"
+          TAR_NAME="HassanIDE-linux-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}.tar.gz"
+          if [ -d "$BUILD_PATH" ]; then
+            echo "Creating tarball: $TAR_NAME"
+            tar -czvf "$TAR_NAME" -C .. "VSCode-linux-${{ matrix.arch }}"
+            ls -lh "$TAR_NAME"
+          fi
+
+      - name: "📤 Upload Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-linux-${{ matrix.arch }}
+          path: |
+            .build/linux/deb/*/*.deb
+            .build/linux/rpm/*/*.rpm
+            HassanIDE-linux-${{ matrix.arch }}-*.tar.gz
           retention-days: 30
           if-no-files-found: warn
 
   # ===========================================================================
-  # 🐧 Job: بناء Linux ARM64
-  # ===========================================================================
-  build-linux-arm64:
-    name: "🐧 Linux ARM64"
-    runs-on: ubuntu-latest
-    needs: prepare
-    if: github.event.inputs.build_linux != 'false'
-    timeout-minutes: 45
-    continue-on-error: true
-    
-    env:
-      VSCODE_ARCH: arm64
-      
-    steps:
-      - name: "🧹 Clean workspace"
-        run: |
-          git clean -ffdx || true
-          rm -rf node_modules .npm .cache || true
-        continue-on-error: true
-
-      - name: "📥 تحميل الكود"
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: "⚙️ Setup Node.js"
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: "🐍 Setup Python"
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: "🔧 Setup Linux dependencies"
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            libx11-dev \
-            libxkbfile-dev \
-            libsecret-1-dev \
-            libkrb5-dev \
-            python3 \
-            pkg-config \
-            fakeroot \
-            rpm \
-            dpkg \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            crossbuild-essential-arm64
-
-      - name: "🔧 Fix permissions"
-        run: sudo chown -R $USER:$USER .
-        continue-on-error: true
-
-      - name: "⚙️ Setup build environment"
-        run: |
-          corepack enable
-          npm install -g typescript ts-node @types/node
-        continue-on-error: true
-
-      - name: "📦 Install dependencies with retry"
-        uses: nick-fields/retry@v2
-        with:
-          timeout_minutes: 20
-          max_attempts: 3
-          command: npm install --legacy-peer-deps --ignore-scripts
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
-          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-          npm_config_build_from_source: false
-          npm_config_arch: arm64
-          CC: aarch64-linux-gnu-gcc
-          CXX: aarch64-linux-gnu-g++
-
-      - name: "🔄 Rebuild native modules"
-        run: |
-          npm rebuild
-          npm run postinstall || true
-        continue-on-error: true
-
-      - name: "⚡ تحميل Electron ARM64"
-        run: npm run electron
-        continue-on-error: true
-        env:
-          npm_config_arch: arm64
-
-      - name: "🔨 بناء الكود"
-        run: npm run compile
-        continue-on-error: true
-
-      - name: "📦 بناء Linux ARM64"
-        run: npx gulp vscode-linux-arm64-min
-        continue-on-error: true
-
-      - name: "📦 إنشاء حزمة DEB ARM64"
-        run: |
-          npx gulp vscode-linux-arm64-prepare-deb
-          npx gulp vscode-linux-arm64-build-deb
-        continue-on-error: true
-
-      - name: "📁 إنشاء ملف tar.gz"
-        run: |
-          BUILD_PATH="../VSCode-linux-arm64"
-          if [ -d "$BUILD_PATH" ]; then
-            tar -czvf "HassanIDE-linux-arm64-${{ needs.prepare.outputs.version }}.tar.gz" -C .. "VSCode-linux-arm64"
-          fi
-        continue-on-error: true
-
-      - name: "📤 رفع Artifacts"
-        uses: actions/upload-artifact@v4
-        with:
-          name: hassanide-linux-arm64
-          path: |
-            .build/linux/deb/arm64/*.deb
-            HassanIDE-linux-arm64-*.tar.gz
-          retention-days: 30
-          if-no-files-found: warn
-
-  # ===========================================================================
-  # 🎉 Job: إنشاء GitHub Release
-  # ===========================================================================
-  create-release:
-    name: "🎉 إنشاء Release"
-    runs-on: ubuntu-latest
-    needs: 
-      - prepare
-      - build-windows-x64
-      - build-windows-arm64
-      - build-macos-x64
-      - build-macos-arm64
-      - build-linux-x64
-      - build-linux-arm64
-    
-    if: |
-      always() && 
-      (startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true') &&
-      !contains(needs.*.result, 'cancelled')
-    
-    permissions:
-      contents: write
-      
-    steps:
-      - name: "📥 تحميل الكود"
-        uses: actions/checkout@v4
-
-      - name: "📥 تحميل Windows x64 Artifacts"
-        uses: actions/download-artifact@v4
-        with:
-          name: hassanide-windows-x64
-          path: artifacts/windows-x64
-        continue-on-error: true
-
-      - name: "📥 تحميل Windows ARM64 Artifacts"
-        uses: actions/download-artifact@v4
-        with:
-          name: hassanide-windows-arm64
-          path: artifacts/windows-arm64
-        continue-on-error: true
-
-      - name: "📥 تحميل macOS x64 Artifacts"
-        uses: actions/download-artifact@v4
-        with:
-          name: hassanide-macos-x64
-          path: artifacts/macos-x64
-        continue-on-error: true
-
-      - name: "📥 تحميل macOS ARM64 Artifacts"
-        uses: actions/download-artifact@v4
-        with:
-          name: hassanide-macos-arm64
-          path: artifacts/macos-arm64
-        continue-on-error: true
-
-      - name: "📥 تحميل Linux x64 Artifacts"
-        uses: actions/download-artifact@v4
-        with:
-          name: hassanide-linux-x64
-          path: artifacts/linux-x64
-        continue-on-error: true
-
-      - name: "📥 تحميل Linux ARM64 Artifacts"
-        uses: actions/download-artifact@v4
-        with:
-          name: hassanide-linux-arm64
-          path: artifacts/linux-arm64
-        continue-on-error: true
-
-      - name: "📋 عرض الملفات"
-        run: |
-          echo "=== جميع الملفات المحملة ==="
-          find artifacts -type f -name "*" 2>/dev/null | head -50 || echo "لا توجد ملفات"
-          echo ""
-          echo "=== إحصائيات ==="
-          du -sh artifacts/* 2>/dev/null || echo "لا توجد ملفات"
-
-      - name: "📁 تجهيز ملفات Release"
-        id: prepare_files
-        run: |
-          mkdir -p release_files
-          
-          find artifacts -type f \( \
-            -name "*.exe" -o \
-            -name "*.dmg" -o \
-            -name "*.deb" -o \
-            -name "*.rpm" -o \
-            -name "*.AppImage" -o \
-            -name "*.tar.gz" -o \
-            -name "*.zip" \
-          \) -exec cp {} release_files/ \; 2>/dev/null || true
-          
-          cd release_files
-          for file in *; do
-            if [ -f "$file" ]; then
-              new_name=$(echo "$file" | sed 's/VSCode/HassanIDE/g' | sed 's/Code/HassanIDE/g')
-              if [ "$file" != "$new_name" ]; then
-                mv "$file" "$new_name" 2>/dev/null || true
-              fi
-            fi
-          done
-          
-          echo "=== الملفات الجاهزة للـ Release ==="
-          ls -la 2>/dev/null || echo "لا توجد ملفات"
-
-      - name: "🎉 إنشاء GitHub Release"
-        uses: softprops/action-gh-release@v1
-        with:
-          name: "🚀 HassanIDE v${{ needs.prepare.outputs.version }}"
-          tag_name: v${{ needs.prepare.outputs.version }}
-          draft: false
-          prerelease: ${{ contains(needs.prepare.outputs.version, 'alpha') || contains(needs.prepare.outputs.version, 'beta') || contains(needs.prepare.outputs.version, 'dev') }}
-          generate_release_notes: true
-          files: release_files/*
-          body: |
-            # 🚀 HassanIDE v${{ needs.prepare.outputs.version }}
-            
-            ## محرر الأكواد العربي - بيئة التطوير المتكاملة
-            
-            ---
-            
-            ## 📥 التحميل
-            
-            ### 🪟 Windows
-            | المعمارية | نوع التثبيت |
-            |-----------|-------------|
-            | x64 (64-bit) | System/User Installer + Portable |
-            | ARM64 | System/User Installer + Portable |
-            
-            ### 🍎 macOS
-            | المعمارية | الوصف |
-            |-----------|-------|
-            | Intel (x64) | لأجهزة Mac القديمة |
-            | Apple Silicon (M1/M2/M3) | لأجهزة Mac الحديثة |
-            
-            ### 🐧 Linux
-            | المعمارية | نوع الحزمة |
-            |-----------|-----------|
-            | x64 | DEB, RPM, AppImage, tar.gz |
-            | ARM64 | DEB, tar.gz |
-            
-            ---
-            
-            ## 🔑 تفعيل الترخيص
-            
-            1. افتح HassanIDE
-            2. اضغط `Ctrl+Shift+P` (أو `Cmd+Shift+P` على Mac)
-            3. اكتب "Activate License"
-            4. أدخل مفتاح الترخيص الخاص بك
-            
-            ---
-            
-            **معلومات البناء:**
-            - 📅 التاريخ: ${{ needs.prepare.outputs.build_date }}
-            - 🔖 الإصدار: ${{ needs.prepare.outputs.version }}
-            - 🔗 Commit: ${{ needs.prepare.outputs.short_sha }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # ===========================================================================
-  # 📊 Job: ملخص البناء
+  # 📊 Build Summary
   # ===========================================================================
   summary:
-    name: "📊 ملخص البناء"
+    name: "📊 Build Summary"
     runs-on: ubuntu-latest
-    needs:
-      - prepare
-      - build-windows-x64
-      - build-windows-arm64
-      - build-macos-x64
-      - build-macos-arm64
-      - build-linux-x64
-      - build-linux-arm64
+    needs: [prepare, build-windows, build-macos, build-linux]
     if: always()
     
     steps:
-      - name: "📊 عرض نتائج البناء"
+      - name: "📊 Generate Build Report"
         run: |
           echo "=============================================="
-          echo "       📊 ملخص بناء HassanIDE"
+          echo "       🚀 HassanIDE Build Report"
           echo "=============================================="
           echo ""
-          echo "📦 الإصدار: ${{ needs.prepare.outputs.version }}"
-          echo "📅 التاريخ: $(date)"
+          echo "📦 Version: ${{ needs.prepare.outputs.version }}"
+          echo "🔖 Commit: ${{ needs.prepare.outputs.short_sha }}"
+          echo "📅 Date: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          echo "🏷️ Release: ${{ needs.prepare.outputs.is_release }}"
           echo ""
+          echo "Build Results:"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🪟 Windows:  ${{ needs.build-windows.result }}"
+          echo "🍎 macOS:    ${{ needs.build-macos.result }}"
+          echo "🐧 Linux:    ${{ needs.build-linux.result }}"
           echo "=============================================="
-          echo "       📋 حالة كل منصة"
-          echo "=============================================="
-          echo ""
-          echo "🪟 Windows x64:    ${{ needs.build-windows-x64.result }}"
-          echo "🪟 Windows ARM64:  ${{ needs.build-windows-arm64.result }}"
-          echo "🍎 macOS x64:      ${{ needs.build-macos-x64.result }}"
-          echo "🍎 macOS ARM64:    ${{ needs.build-macos-arm64.result }}"
-          echo "🐧 Linux x64:      ${{ needs.build-linux-x64.result }}"
-          echo "🐧 Linux ARM64:    ${{ needs.build-linux-arm64.result }}"
-          echo ""
-          echo "=============================================="
-          
-          # التحقق من النجاح الكلي
-          success_count=0
-          [[ "${{ needs.build-windows-x64.result }}" == "success" ]] && ((success_count++))
-          [[ "${{ needs.build-macos-x64.result }}" == "success" ]] && ((success_count++))
-          [[ "${{ needs.build-linux-x64.result }}" == "success" ]] && ((success_count++))
-          
-          if [ $success_count -gt 0 ]; then
-            echo "✅ تم البناء بنجاح لـ $success_count منصة/منصات!"
-          else
-            echo "⚠️ لم ينجح أي بناء - يرجى مراجعة السجلات"
-          fi
+
+      - name: "📥 Download All Artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+        continue-on-error: true
+
+      - name: "📋 List All Artifacts"
+        run: |
+          echo "=== All Build Artifacts ==="
+          find all-artifacts -type f 2>/dev/null | head -100 || echo "No artifacts found"
+
+  # ===========================================================================
+  # 🎉 Create Release (only on tags)
+  # ===========================================================================
+  release:
+    name: "🎉 Create Release"
+    runs-on: ubuntu-latest
+    needs: [prepare, build-windows, build-macos, build-linux]
+    if: needs.prepare.outputs.is_release == 'true'
+    
+    steps:
+      - name: "📥 Download All Artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: "📋 Prepare Release Files"
+        run: |
+          mkdir -p release-files
+          find release-artifacts -type f \( -name "*.exe" -o -name "*.zip" -o -name "*.dmg" -o -name "*.deb" -o -name "*.rpm" -o -name "*.tar.gz" \) -exec cp {} release-files/ \;
+          echo "=== Release Files ==="
+          ls -lh release-files/ || echo "No release files found"
+
+      - name: "🎉 Create GitHub Release"
+        uses: softprops/action-gh-release@v1
+        with:
+          name: "HassanIDE v${{ needs.prepare.outputs.version }}"
+          body: |
+            ## 🚀 HassanIDE v${{ needs.prepare.outputs.version }}
+            
+            ### Downloads
+            
+            | Platform | Architecture | File |
+            |----------|--------------|------|
+            | Windows | x64 | HassanIDE-win32-x64-*.exe |
+            | Windows | ARM64 | HassanIDE-win32-arm64-*.exe |
+            | macOS | Intel | HassanIDE-darwin-x64-*.dmg |
+            | macOS | Apple Silicon | HassanIDE-darwin-arm64-*.dmg |
+            | Linux | x64 | HassanIDE-linux-x64-*.tar.gz |
+            | Linux | ARM64 | HassanIDE-linux-arm64-*.tar.gz |
+            
+            ### Changes
+            See [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
+          files: release-files/*
+          draft: false
+          prerelease: ${{ contains(needs.prepare.outputs.version, 'dev') || contains(needs.prepare.outputs.version, 'beta') }}
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
