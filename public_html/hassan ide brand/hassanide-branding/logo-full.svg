@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100">
+  <defs>
+    <linearGradient id="iconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4F46E5"/>
+      <stop offset="100%" style="stop-color:#7C3AED"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Icon -->
+  <g transform="translate(10, 10)">
+    <circle cx="40" cy="40" r="38" fill="url(#iconGrad)"/>
+    
+    <!-- Brackets -->
+    <g fill="white" opacity="0.85" transform="scale(0.16) translate(0, 0)">
+      <polygon points="150,256 90,196 90,176 170,236 170,276 90,336 90,316" transform="translate(45, -5)"/>
+      <polygon points="362,256 422,196 422,176 342,236 342,276 422,336 422,316" transform="translate(-45, -5)"/>
+    </g>
+    
+    <!-- H Letter -->
+    <g fill="white" transform="translate(22, 22)">
+      <rect x="0" y="0" width="6" height="36" rx="2"/>
+      <rect x="30" y="0" width="6" height="36" rx="2"/>
+      <rect x="0" y="15" width="36" height="6" rx="2"/>
+    </g>
+  </g>
+  
+  <!-- Text: Hassan IDE -->
+  <text x="105" y="62" font-family="Arial, sans-serif" font-size="38" font-weight="bold" fill="#1F2937">
+    Hassan
+    <tspan fill="url(#iconGrad)">IDE</tspan>
+  </text>
+</svg>

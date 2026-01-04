@@ -1,0 +1,250 @@
+# =====================================================
+# Hassan IDE - Build and Release Workflow
+# =====================================================
+# يقوم ببناء وإصدار HassanIDE لجميع المنصات
+# يعمل عند push لـ tag بصيغة v*.*.*
+# =====================================================
+
+name: Build and Release HassanIDE
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+env:
+  NODE_VERSION: '20.x'
+  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+
+jobs:
+  # =====================================================
+  # Build for Windows
+  # =====================================================
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run compile
+        env:
+          NODE_ENV: production
+
+      - name: Package for Windows
+        run: |
+          npm run gulp vscode-win32-x64
+          npm run gulp vscode-win32-x64-inno-updater
+        env:
+          VSCODE_BUILD_WIN32_TUNNELCLI: 1
+
+      - name: Create installer
+        run: |
+          npm run gulp vscode-win32-x64-system-setup
+          npm run gulp vscode-win32-x64-user-setup
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-windows
+          path: |
+            .build/win32-x64/system-setup/*.exe
+            .build/win32-x64/user-setup/*.exe
+          retention-days: 7
+
+  # =====================================================
+  # Build for macOS
+  # =====================================================
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run compile
+        env:
+          NODE_ENV: production
+
+      - name: Package for macOS (x64)
+        run: npm run gulp vscode-darwin-x64
+
+      - name: Package for macOS (ARM64)
+        run: npm run gulp vscode-darwin-arm64
+
+      - name: Create DMG
+        run: |
+          npm run gulp vscode-darwin-x64-build-dmg
+          npm run gulp vscode-darwin-arm64-build-dmg
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-macos
+          path: |
+            .build/darwin-x64/*.dmg
+            .build/darwin-arm64/*.dmg
+          retention-days: 7
+
+  # =====================================================
+  # Build for Linux
+  # =====================================================
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbfile-dev libsecret-1-dev rpm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run compile
+        env:
+          NODE_ENV: production
+
+      - name: Package for Linux
+        run: npm run gulp vscode-linux-x64
+
+      - name: Create packages
+        run: |
+          npm run gulp vscode-linux-x64-build-deb
+          npm run gulp vscode-linux-x64-build-rpm
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-linux
+          path: |
+            .build/linux-x64/*.deb
+            .build/linux-x64/*.rpm
+            .build/linux-x64/*.tar.gz
+          retention-days: 7
+
+  # =====================================================
+  # Create GitHub Release
+  # =====================================================
+  release:
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: HassanIDE v${{ steps.get_version.outputs.VERSION }}
+          tag_name: v${{ steps.get_version.outputs.VERSION }}
+          draft: false
+          prerelease: ${{ contains(github.ref, 'beta') || contains(github.ref, 'alpha') }}
+          generate_release_notes: true
+          files: |
+            artifacts/hassanide-windows/**/*
+            artifacts/hassanide-macos/**/*
+            artifacts/hassanide-linux/**/*
+          body: |
+            ## HassanIDE v${{ steps.get_version.outputs.VERSION }}
+            
+            ### 📥 Downloads
+            
+            | Platform | Download |
+            |----------|----------|
+            | Windows (64-bit) | [HassanIDE-Setup.exe](link) |
+            | macOS (Intel) | [HassanIDE-x64.dmg](link) |
+            | macOS (Apple Silicon) | [HassanIDE-arm64.dmg](link) |
+            | Linux (deb) | [HassanIDE.deb](link) |
+            | Linux (rpm) | [HassanIDE.rpm](link) |
+            
+            ### ✨ What's New
+            See the [CHANGELOG](CHANGELOG.md) for full details.
+            
+            ### 🔑 License
+            Activate your license in HassanIDE:
+            1. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
+            2. Type "Activate License"
+            3. Enter your license key
+            
+            Get your license at [hassanide.com/pricing](https://hassanide.com/pricing)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =====================================================
+  # Update Download Links on Website
+  # =====================================================
+  update-website:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Update download links via API
+        run: |
+          curl -X POST "${{ secrets.WEBSITE_API_URL }}/api/update-version.php" \
+            -H "Authorization: Bearer ${{ secrets.WEBSITE_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "version": "${{ steps.version.outputs.VERSION }}",
+              "release_url": "https://github.com/${{ github.repository }}/releases/tag/v${{ steps.version.outputs.VERSION }}"
+            }'
+        continue-on-error: true

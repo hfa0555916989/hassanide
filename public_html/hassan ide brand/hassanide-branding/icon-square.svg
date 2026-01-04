@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4F46E5"/>
+      <stop offset="100%" style="stop-color:#7C3AED"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Rounded Square Background -->
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="url(#bgGrad)"/>
+  
+  <!-- Code Brackets -->
+  <g fill="white" opacity="0.85">
+    <!-- Left Bracket < -->
+    <polygon points="150,256 90,196 90,176 170,236 170,276 90,336 90,316"/>
+    
+    <!-- Right Bracket > -->
+    <polygon points="362,256 422,196 422,176 342,236 342,276 422,336 422,316"/>
+  </g>
+  
+  <!-- Letter H -->
+  <g fill="white">
+    <rect x="195" y="150" width="36" height="212" rx="10"/>
+    <rect x="281" y="150" width="36" height="212" rx="10"/>
+    <rect x="195" y="234" width="122" height="36" rx="10"/>
+  </g>
+  
+  <!-- Blinking Cursor -->
+  <rect x="328" y="306" width="10" height="48" rx="5" fill="#A78BFA"/>
+</svg>

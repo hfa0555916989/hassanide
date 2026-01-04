@@ -1,11 +1,11 @@
 {
-  "name": "code-oss-dev",
+  "name": "hassanide",
   "version": "1.108.0",
   "distro": "1133c0369c2db6f38f7f0e99737dc4770d393748",
   "author": {
-    "name": "Microsoft Corporation"
+    "name": "Hassan Tech"
   },
-  "license": "MIT",
+  "license": "Proprietary",
   "main": "./out/main.js",
   "type": "module",
   "private": true,
@@ -58,6 +58,10 @@
     "eslint": "node build/eslint.ts",
     "stylelint": "node build/stylelint.ts",
     "playwright-install": "npm exec playwright install",
+    "build-hassanide": "node scripts/build-hassanide.js",
+    "build-hassanide-win": "node scripts/build-hassanide.js win32",
+    "build-hassanide-mac": "node scripts/build-hassanide.js darwin",
+    "build-hassanide-linux": "node scripts/build-hassanide.js linux",
     "compile-build": "npm run gulp compile-build-with-mangling",
     "compile-extensions-build": "npm run gulp compile-extensions-build",
     "minify-vscode": "npm run gulp minify-vscode",

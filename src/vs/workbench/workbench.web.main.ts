@@ -99,6 +99,8 @@ import { IWebContentExtractorService, NullWebContentExtractorService, ISharedWeb
 import { IMcpGalleryManifestService } from '../platform/mcp/common/mcpGalleryManifest.js';
 import { WorkbenchMcpGalleryManifestService } from './services/mcp/browser/mcpGalleryManifestService.js';
 import { UserDataSyncResourceProviderService } from '../platform/userDataSync/common/userDataSyncResourceProvider.js';
+import { ILicenseService } from '../platform/license/common/license.js';
+import { LicenseService } from '../platform/license/browser/licenseService.js';
 
 registerSingleton(IWorkbenchExtensionManagementService, ExtensionManagementService, InstantiationType.Delayed);
 registerSingleton(IAccessibilityService, AccessibilityService, InstantiationType.Delayed);
@@ -119,6 +121,7 @@ registerSingleton(ILanguagePackService, WebLanguagePacksService, InstantiationTy
 registerSingleton(IWebContentExtractorService, NullWebContentExtractorService, InstantiationType.Delayed);
 registerSingleton(ISharedWebContentExtractorService, NullSharedWebContentExtractorService, InstantiationType.Delayed);
 registerSingleton(IMcpGalleryManifestService, WorkbenchMcpGalleryManifestService, InstantiationType.Delayed);
+registerSingleton(ILicenseService, LicenseService, InstantiationType.Delayed);
 
 //#endregion
 
@@ -171,5 +174,8 @@ import './contrib/remote/browser/remoteStartEntry.contribution.js';
 
 // Process Explorer
 import './contrib/processExplorer/browser/processExplorer.web.contribution.js';
+
+// License
+import './contrib/license/browser/license.contribution.js';
 
 //#endregion

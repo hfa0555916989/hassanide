@@ -1,0 +1,133 @@
+Hassan IDE License Agreement
+=============================
+
+Copyright (c) 2024-2026 Hassan Tech. All rights reserved.
+
+IMPORTANT: READ CAREFULLY BEFORE USING THIS SOFTWARE
+
+This License Agreement ("Agreement") is a legal agreement between you
+("User") and Hassan Tech ("Company") for the use of Hassan IDE software
+("Software").
+
+1. LICENSE GRANT
+----------------
+
+1.1 Starter License (Free)
+The Company grants you a free, non-exclusive, non-transferable license
+to use the basic features of the Software for personal or commercial use,
+subject to the limitations of the Starter plan.
+
+1.2 Pro License
+Upon payment of the applicable subscription fee, the Company grants you
+a non-exclusive, non-transferable license to use all features of the
+Software included in the Pro plan for up to 3 devices.
+
+1.3 Teams License
+Upon payment of the applicable subscription fee, the Company grants
+your organization a non-exclusive, non-transferable license to use all
+features of the Software included in the Teams plan for up to 10 users.
+
+2. RESTRICTIONS
+---------------
+
+You may NOT:
+- Reverse engineer, decompile, or disassemble the Software
+- Modify or create derivative works based on the Software
+- Rent, lease, or lend the Software to third parties
+- Remove any proprietary notices or labels on the Software
+- Use the Software for any unlawful purpose
+- Share your license key with others
+- Exceed the device limits of your license plan
+
+3. SUBSCRIPTION AND PAYMENT
+---------------------------
+
+3.1 Free Trial
+New users may access a 7-day free trial of Pro features without
+payment information.
+
+3.2 Subscription Fees
+- Pro: 29 SAR/month or 290 SAR/year
+- Teams: 99 SAR/month or 990 SAR/year
+
+3.3 Automatic Renewal
+Subscriptions automatically renew unless cancelled before the
+renewal date.
+
+3.4 Refunds
+We offer a 7-day money-back guarantee for new subscriptions.
+
+4. LICENSE VALIDATION
+---------------------
+
+4.1 The Software requires periodic online validation of your license.
+
+4.2 The Software may operate offline for up to 7 days before
+requiring re-validation.
+
+4.3 Failure to validate may result in reduced functionality.
+
+5. UPDATES
+----------
+
+5.1 Pro and Teams subscribers receive automatic updates.
+
+5.2 Starter users may manually check for updates.
+
+5.3 Updates are subject to this Agreement.
+
+6. SUPPORT
+----------
+
+6.1 Starter: Community support only
+
+6.2 Pro: Email support (48-hour response time)
+
+6.3 Teams: Priority support (24-hour response time)
+
+7. TERMINATION
+--------------
+
+7.1 This Agreement terminates automatically if you fail to comply
+with any term.
+
+7.2 Upon termination, you must uninstall the Software.
+
+7.3 The Company may terminate this Agreement at any time with
+30 days notice.
+
+8. DISCLAIMER OF WARRANTIES
+---------------------------
+
+THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+NONINFRINGEMENT.
+
+9. LIMITATION OF LIABILITY
+--------------------------
+
+IN NO EVENT SHALL THE COMPANY BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE USE
+OR INABILITY TO USE THE SOFTWARE.
+
+10. GOVERNING LAW
+-----------------
+
+This Agreement shall be governed by the laws of the Kingdom of
+Saudi Arabia.
+
+11. CONTACT INFORMATION
+-----------------------
+
+Hassan Tech
+Website: https://hassanide.com
+Email: legal@hassanide.com
+
+---
+
+By installing or using the Software, you acknowledge that you have
+read this Agreement, understand it, and agree to be bound by its
+terms and conditions.
+
+Last Updated: January 2026

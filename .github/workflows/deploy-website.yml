@@ -1,0 +1,51 @@
+# =====================================================
+# Hassan IDE - Deploy Website Workflow
+# =====================================================
+# ينشر موقع HassanIDE على الاستضافة
+# =====================================================
+
+name: Deploy Website
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'public_html/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USER }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./public_html/
+          server-dir: /public_html/
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/*.sql
+            **/.env
+            **/logs/**
+
+      - name: Notify deployment success
+        if: success()
+        run: |
+          echo "✅ Website deployed successfully!"
+          echo "URL: https://hassanide.com"
+
+      - name: Clear cache (optional)
+        if: success()
+        run: |
+          curl -X POST "${{ secrets.WEBSITE_URL }}/api/clear-cache.php" \
+            -H "Authorization: Bearer ${{ secrets.ADMIN_API_KEY }}" || true
+        continue-on-error: true
