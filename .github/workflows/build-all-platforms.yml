@@ -1,0 +1,925 @@
+# =============================================================================
+# HassanIDE - نظام البناء الشامل لجميع المنصات
+# =============================================================================
+# هذا الـ workflow يقوم ببناء HassanIDE لجميع أنظمة التشغيل والمعماريات:
+# - Windows: x64 و ARM64 (Installer + Portable)
+# - macOS: Intel و Apple Silicon (.dmg و .app)
+# - Linux: x64 و ARM64 (.AppImage و .deb و .rpm)
+#
+# يعمل تلقائياً عند:
+# 1. Push إلى main branch
+# 2. إنشاء tag بصيغة v* (مثل v1.0.0)
+# 3. التشغيل اليدوي (workflow_dispatch)
+# =============================================================================
+
+name: "🚀 Build HassanIDE - All Platforms"
+
+# =============================================================================
+# المُحفّزات (Triggers)
+# =============================================================================
+on:
+  # يعمل عند push على main
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+
+  # يعمل عند إنشاء tags بصيغة v*
+  push:
+    tags:
+      - 'v*'
+
+  # يدعم التشغيل اليدوي من واجهة GitHub
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'رقم الإصدار (مثل 1.2.3)'
+        required: false
+        default: ''
+      build_windows:
+        description: 'بناء Windows'
+        type: boolean
+        default: true
+      build_macos:
+        description: 'بناء macOS'
+        type: boolean
+        default: true
+      build_linux:
+        description: 'بناء Linux'
+        type: boolean
+        default: true
+      create_release:
+        description: 'إنشاء Release'
+        type: boolean
+        default: false
+
+# =============================================================================
+# المتغيرات العامة
+# =============================================================================
+env:
+  # إصدار Node.js المستخدم
+  NODE_VERSION: '20'
+  
+  # مسارات الـ cache
+  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+  
+  # إعدادات npm
+  NPM_CONFIG_LEGACY_PEER_DEPS: 'true'
+  
+  # اسم المنتج
+  PRODUCT_NAME: 'HassanIDE'
+
+# =============================================================================
+# تقييد الـ workflows المتزامنة
+# =============================================================================
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# =============================================================================
+# الوظائف (Jobs)
+# =============================================================================
+jobs:
+  # ===========================================================================
+  # 📋 Job: تحضير المعلومات الأساسية
+  # ===========================================================================
+  prepare:
+    name: "📋 تحضير البناء"
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_release: ${{ steps.check.outputs.is_release }}
+      short_sha: ${{ steps.info.outputs.short_sha }}
+      build_date: ${{ steps.info.outputs.build_date }}
+    
+    steps:
+      - name: "📥 تحميل الكود"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # استخراج رقم الإصدار
+      - name: "🔢 تحديد رقم الإصدار"
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.version }}" ]]; then
+            # إصدار يدوي من المستخدم
+            VERSION="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # استخراج الإصدار من الـ tag
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            # إصدار تطويري بناءً على package.json
+            VERSION=$(node -p "require('./package.json').version")-dev.$(date +%Y%m%d)
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 الإصدار: $VERSION"
+
+      # التحقق إذا كان release
+      - name: "🏷️ التحقق من نوع البناء"
+        id: check
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]] || [[ "${{ github.event.inputs.create_release }}" == "true" ]]; then
+            echo "is_release=true" >> $GITHUB_OUTPUT
+            echo "✅ هذا البناء سينتج عنه Release"
+          else
+            echo "is_release=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ هذا بناء تطويري فقط"
+          fi
+
+      # معلومات إضافية
+      - name: "📝 استخراج معلومات البناء"
+        id: info
+        run: |
+          echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+  # ===========================================================================
+  # 🪟 Job: بناء Windows x64
+  # ===========================================================================
+  build-windows-x64:
+    name: "🪟 Windows x64"
+    runs-on: windows-latest
+    needs: prepare
+    if: github.event.inputs.build_windows != 'false'
+    
+    env:
+      VSCODE_ARCH: x64
+      
+    steps:
+      # تحميل الكود المصدري
+      - name: "📥 تحميل الكود"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # إعداد Node.js مع الـ cache
+      - name: "⚙️ إعداد Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      # إعداد Python (مطلوب لبعض الـ native modules)
+      - name: "🐍 إعداد Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # تثبيت الـ dependencies
+      - name: "📦 تثبيت المتطلبات"
+        run: |
+          npm install --legacy-peer-deps
+          npm run postinstall
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+
+      # تحميل Electron
+      - name: "⚡ تحميل Electron"
+        run: npm run electron
+
+      # بناء الكود
+      - name: "🔨 بناء الكود (Compile)"
+        run: npm run compile
+
+      # بناء حزمة Windows x64
+      - name: "📦 بناء حزمة Windows x64"
+        run: |
+          npx gulp vscode-win32-x64-min
+          npx gulp vscode-win32-x64-inno-updater
+        env:
+          VSCODE_BUILD_WIN32_TUNNELCLI: 1
+
+      # إنشاء System Installer
+      - name: "💿 إنشاء System Installer"
+        run: npx gulp vscode-win32-x64-system-setup
+        continue-on-error: true
+
+      # إنشاء User Installer
+      - name: "💿 إنشاء User Installer"
+        run: npx gulp vscode-win32-x64-user-setup
+        continue-on-error: true
+
+      # إنشاء ملف ZIP محمول
+      - name: "📁 إنشاء نسخة محمولة (ZIP)"
+        run: |
+          $buildPath = "..\VSCode-win32-x64"
+          if (Test-Path $buildPath) {
+            Compress-Archive -Path $buildPath\* -DestinationPath "HassanIDE-win32-x64-${{ needs.prepare.outputs.version }}.zip" -Force
+          }
+        shell: pwsh
+
+      # رفع الـ Artifacts
+      - name: "📤 رفع Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-windows-x64
+          path: |
+            .build/win32-x64/system-setup/*.exe
+            .build/win32-x64/user-setup/*.exe
+            HassanIDE-win32-x64-*.zip
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # 🪟 Job: بناء Windows ARM64
+  # ===========================================================================
+  build-windows-arm64:
+    name: "🪟 Windows ARM64"
+    runs-on: windows-latest
+    needs: prepare
+    if: github.event.inputs.build_windows != 'false'
+    
+    env:
+      VSCODE_ARCH: arm64
+      
+    steps:
+      - name: "📥 تحميل الكود"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "⚙️ إعداد Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: "🐍 إعداد Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: "📦 تثبيت المتطلبات"
+        run: |
+          npm install --legacy-peer-deps
+          npm run postinstall
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          npm_config_arch: arm64
+
+      - name: "⚡ تحميل Electron ARM64"
+        run: npm run electron
+        env:
+          npm_config_arch: arm64
+
+      - name: "🔨 بناء الكود"
+        run: npm run compile
+
+      - name: "📦 بناء حزمة Windows ARM64"
+        run: |
+          npx gulp vscode-win32-arm64-min
+          npx gulp vscode-win32-arm64-inno-updater
+        env:
+          VSCODE_BUILD_WIN32_TUNNELCLI: 1
+
+      - name: "💿 إنشاء System Installer ARM64"
+        run: npx gulp vscode-win32-arm64-system-setup
+        continue-on-error: true
+
+      - name: "💿 إنشاء User Installer ARM64"
+        run: npx gulp vscode-win32-arm64-user-setup
+        continue-on-error: true
+
+      - name: "📁 إنشاء نسخة محمولة ARM64"
+        run: |
+          $buildPath = "..\VSCode-win32-arm64"
+          if (Test-Path $buildPath) {
+            Compress-Archive -Path $buildPath\* -DestinationPath "HassanIDE-win32-arm64-${{ needs.prepare.outputs.version }}.zip" -Force
+          }
+        shell: pwsh
+
+      - name: "📤 رفع Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-windows-arm64
+          path: |
+            .build/win32-arm64/system-setup/*.exe
+            .build/win32-arm64/user-setup/*.exe
+            HassanIDE-win32-arm64-*.zip
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # 🍎 Job: بناء macOS Intel (x64)
+  # ===========================================================================
+  build-macos-x64:
+    name: "🍎 macOS Intel"
+    runs-on: macos-13  # Intel-based runner
+    needs: prepare
+    if: github.event.inputs.build_macos != 'false'
+    
+    env:
+      VSCODE_ARCH: x64
+      
+    steps:
+      - name: "📥 تحميل الكود"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "⚙️ إعداد Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: "🐍 إعداد Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: "📦 تثبيت المتطلبات"
+        run: |
+          npm install --legacy-peer-deps
+          npm run postinstall
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+      - name: "⚡ تحميل Electron"
+        run: npm run electron
+
+      - name: "🔨 بناء الكود"
+        run: npm run compile
+
+      # بناء التطبيق لـ macOS x64
+      - name: "📦 بناء macOS x64"
+        run: npx gulp vscode-darwin-x64-min
+
+      # إنشاء ملف DMG
+      - name: "💿 إنشاء DMG"
+        run: |
+          # تثبيت أداة create-dmg إذا لم تكن موجودة
+          brew install create-dmg || true
+          npx gulp vscode-darwin-x64-build-dmg
+        continue-on-error: true
+
+      # ضغط التطبيق
+      - name: "📁 ضغط التطبيق"
+        run: |
+          BUILD_PATH="../VSCode-darwin-x64"
+          if [ -d "$BUILD_PATH" ]; then
+            cd ..
+            zip -r -y "hassanide/HassanIDE-darwin-x64-${{ needs.prepare.outputs.version }}.zip" "VSCode-darwin-x64"
+          fi
+
+      - name: "📤 رفع Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-macos-x64
+          path: |
+            .build/darwin-x64/*.dmg
+            HassanIDE-darwin-x64-*.zip
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # 🍎 Job: بناء macOS Apple Silicon (ARM64)
+  # ===========================================================================
+  build-macos-arm64:
+    name: "🍎 macOS Apple Silicon"
+    runs-on: macos-14  # Apple Silicon runner
+    needs: prepare
+    if: github.event.inputs.build_macos != 'false'
+    
+    env:
+      VSCODE_ARCH: arm64
+      
+    steps:
+      - name: "📥 تحميل الكود"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "⚙️ إعداد Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: "🐍 إعداد Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: "📦 تثبيت المتطلبات"
+        run: |
+          npm install --legacy-peer-deps
+          npm run postinstall
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+      - name: "⚡ تحميل Electron ARM64"
+        run: npm run electron
+
+      - name: "🔨 بناء الكود"
+        run: npm run compile
+
+      - name: "📦 بناء macOS ARM64"
+        run: npx gulp vscode-darwin-arm64-min
+
+      - name: "💿 إنشاء DMG"
+        run: |
+          brew install create-dmg || true
+          npx gulp vscode-darwin-arm64-build-dmg
+        continue-on-error: true
+
+      - name: "📁 ضغط التطبيق"
+        run: |
+          BUILD_PATH="../VSCode-darwin-arm64"
+          if [ -d "$BUILD_PATH" ]; then
+            cd ..
+            zip -r -y "hassanide/HassanIDE-darwin-arm64-${{ needs.prepare.outputs.version }}.zip" "VSCode-darwin-arm64"
+          fi
+
+      - name: "📤 رفع Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-macos-arm64
+          path: |
+            .build/darwin-arm64/*.dmg
+            HassanIDE-darwin-arm64-*.zip
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # 🐧 Job: بناء Linux x64
+  # ===========================================================================
+  build-linux-x64:
+    name: "🐧 Linux x64"
+    runs-on: ubuntu-22.04
+    needs: prepare
+    if: github.event.inputs.build_linux != 'false'
+    
+    env:
+      VSCODE_ARCH: x64
+      
+    steps:
+      - name: "📥 تحميل الكود"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "⚙️ إعداد Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: "🐍 إعداد Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # تثبيت متطلبات النظام لـ Linux
+      - name: "🔧 تثبيت متطلبات النظام"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libx11-dev \
+            libxkbfile-dev \
+            libsecret-1-dev \
+            libkrb5-dev \
+            fakeroot \
+            rpm \
+            dpkg \
+            libfuse2 \
+            zsync
+
+      - name: "📦 تثبيت المتطلبات"
+        run: |
+          npm install --legacy-peer-deps
+          npm run postinstall
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+      - name: "⚡ تحميل Electron"
+        run: npm run electron
+
+      - name: "🔨 بناء الكود"
+        run: npm run compile
+
+      # بناء التطبيق
+      - name: "📦 بناء Linux x64"
+        run: npx gulp vscode-linux-x64-min
+
+      # إنشاء حزمة .deb
+      - name: "📦 إنشاء حزمة DEB"
+        run: |
+          npx gulp vscode-linux-x64-prepare-deb
+          npx gulp vscode-linux-x64-build-deb
+        continue-on-error: true
+
+      # إنشاء حزمة .rpm
+      - name: "📦 إنشاء حزمة RPM"
+        run: npx gulp vscode-linux-x64-build-rpm
+        continue-on-error: true
+
+      # إنشاء tar.gz
+      - name: "📁 إنشاء ملف tar.gz"
+        run: |
+          BUILD_PATH="../VSCode-linux-x64"
+          if [ -d "$BUILD_PATH" ]; then
+            tar -czvf "HassanIDE-linux-x64-${{ needs.prepare.outputs.version }}.tar.gz" -C .. "VSCode-linux-x64"
+          fi
+
+      # إنشاء AppImage
+      - name: "📦 إنشاء AppImage"
+        run: |
+          # تحميل appimagetool
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          
+          # إنشاء AppDir
+          BUILD_PATH="../VSCode-linux-x64"
+          APPDIR="HassanIDE.AppDir"
+          
+          if [ -d "$BUILD_PATH" ]; then
+            mkdir -p "$APPDIR/usr/bin"
+            mkdir -p "$APPDIR/usr/share/applications"
+            mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
+            
+            # نسخ الملفات
+            cp -r $BUILD_PATH/* "$APPDIR/usr/bin/"
+            
+            # إنشاء ملف desktop
+            cat > "$APPDIR/hassanide.desktop" << EOF
+          [Desktop Entry]
+          Name=Hassan IDE
+          Exec=hassanide
+          Icon=hassanide
+          Type=Application
+          Categories=Development;IDE;
+          EOF
+            
+            # نسخ الأيقونة
+            if [ -f "resources/linux/code.png" ]; then
+              cp resources/linux/code.png "$APPDIR/hassanide.png"
+            fi
+            
+            # إنشاء AppRun
+            cat > "$APPDIR/AppRun" << 'EOF'
+          #!/bin/bash
+          SELF=$(readlink -f "$0")
+          HERE=${SELF%/*}
+          export PATH="${HERE}/usr/bin/:${PATH}"
+          exec "${HERE}/usr/bin/hassanide" "$@"
+          EOF
+            chmod +x "$APPDIR/AppRun"
+            
+            # بناء AppImage
+            ARCH=x86_64 ./appimagetool-x86_64.AppImage "$APPDIR" "HassanIDE-linux-x64-${{ needs.prepare.outputs.version }}.AppImage"
+          fi
+        continue-on-error: true
+
+      - name: "📤 رفع Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-linux-x64
+          path: |
+            .build/linux/deb/amd64/*.deb
+            .build/linux/rpm/x86_64/*.rpm
+            HassanIDE-linux-x64-*.tar.gz
+            HassanIDE-linux-x64-*.AppImage
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # 🐧 Job: بناء Linux ARM64
+  # ===========================================================================
+  build-linux-arm64:
+    name: "🐧 Linux ARM64"
+    runs-on: ubuntu-22.04
+    needs: prepare
+    if: github.event.inputs.build_linux != 'false'
+    
+    env:
+      VSCODE_ARCH: arm64
+      
+    steps:
+      - name: "📥 تحميل الكود"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "⚙️ إعداد Node.js"
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: "🐍 إعداد Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # تثبيت متطلبات Cross-compilation
+      - name: "🔧 تثبيت متطلبات النظام"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libx11-dev \
+            libxkbfile-dev \
+            libsecret-1-dev \
+            libkrb5-dev \
+            fakeroot \
+            rpm \
+            dpkg \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            crossbuild-essential-arm64
+
+      - name: "📦 تثبيت المتطلبات"
+        run: |
+          npm install --legacy-peer-deps
+          npm run postinstall
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          npm_config_arch: arm64
+          CC: aarch64-linux-gnu-gcc
+          CXX: aarch64-linux-gnu-g++
+
+      - name: "⚡ تحميل Electron ARM64"
+        run: npm run electron
+        env:
+          npm_config_arch: arm64
+
+      - name: "🔨 بناء الكود"
+        run: npm run compile
+
+      - name: "📦 بناء Linux ARM64"
+        run: npx gulp vscode-linux-arm64-min
+
+      - name: "📦 إنشاء حزمة DEB ARM64"
+        run: |
+          npx gulp vscode-linux-arm64-prepare-deb
+          npx gulp vscode-linux-arm64-build-deb
+        continue-on-error: true
+
+      - name: "📁 إنشاء ملف tar.gz"
+        run: |
+          BUILD_PATH="../VSCode-linux-arm64"
+          if [ -d "$BUILD_PATH" ]; then
+            tar -czvf "HassanIDE-linux-arm64-${{ needs.prepare.outputs.version }}.tar.gz" -C .. "VSCode-linux-arm64"
+          fi
+
+      - name: "📤 رفع Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: hassanide-linux-arm64
+          path: |
+            .build/linux/deb/arm64/*.deb
+            HassanIDE-linux-arm64-*.tar.gz
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # 🎉 Job: إنشاء GitHub Release
+  # ===========================================================================
+  create-release:
+    name: "🎉 إنشاء Release"
+    runs-on: ubuntu-latest
+    needs: 
+      - prepare
+      - build-windows-x64
+      - build-windows-arm64
+      - build-macos-x64
+      - build-macos-arm64
+      - build-linux-x64
+      - build-linux-arm64
+    
+    # ينفذ فقط عند Tags أو التشغيل اليدوي مع create_release
+    if: |
+      always() && 
+      (startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true') &&
+      !contains(needs.*.result, 'cancelled')
+    
+    permissions:
+      contents: write
+      
+    steps:
+      - name: "📥 تحميل الكود"
+        uses: actions/checkout@v4
+
+      # تحميل جميع الـ Artifacts
+      - name: "📥 تحميل Windows x64 Artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          name: hassanide-windows-x64
+          path: artifacts/windows-x64
+        continue-on-error: true
+
+      - name: "📥 تحميل Windows ARM64 Artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          name: hassanide-windows-arm64
+          path: artifacts/windows-arm64
+        continue-on-error: true
+
+      - name: "📥 تحميل macOS x64 Artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          name: hassanide-macos-x64
+          path: artifacts/macos-x64
+        continue-on-error: true
+
+      - name: "📥 تحميل macOS ARM64 Artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          name: hassanide-macos-arm64
+          path: artifacts/macos-arm64
+        continue-on-error: true
+
+      - name: "📥 تحميل Linux x64 Artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          name: hassanide-linux-x64
+          path: artifacts/linux-x64
+        continue-on-error: true
+
+      - name: "📥 تحميل Linux ARM64 Artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          name: hassanide-linux-arm64
+          path: artifacts/linux-arm64
+        continue-on-error: true
+
+      # عرض الملفات المحملة
+      - name: "📋 عرض الملفات"
+        run: |
+          echo "=== جميع الملفات المحملة ==="
+          find artifacts -type f -name "*" | head -50
+          echo ""
+          echo "=== إحصائيات ==="
+          du -sh artifacts/* 2>/dev/null || echo "لا توجد ملفات"
+
+      # تجهيز ملفات Release
+      - name: "📁 تجهيز ملفات Release"
+        id: prepare_files
+        run: |
+          mkdir -p release_files
+          
+          # نسخ جميع الملفات المهمة
+          find artifacts -type f \( \
+            -name "*.exe" -o \
+            -name "*.dmg" -o \
+            -name "*.deb" -o \
+            -name "*.rpm" -o \
+            -name "*.AppImage" -o \
+            -name "*.tar.gz" -o \
+            -name "*.zip" \
+          \) -exec cp {} release_files/ \;
+          
+          # إعادة تسمية الملفات لتوحيد الأسماء
+          cd release_files
+          for file in *; do
+            if [ -f "$file" ]; then
+              # استبدال VSCode بـ HassanIDE
+              new_name=$(echo "$file" | sed 's/VSCode/HassanIDE/g' | sed 's/Code/HassanIDE/g')
+              if [ "$file" != "$new_name" ]; then
+                mv "$file" "$new_name" 2>/dev/null || true
+              fi
+            fi
+          done
+          
+          echo "=== الملفات الجاهزة للـ Release ==="
+          ls -la
+          
+          # حفظ قائمة الملفات
+          ls -1 > ../file_list.txt
+
+      # إنشاء Release
+      - name: "🎉 إنشاء GitHub Release"
+        uses: softprops/action-gh-release@v1
+        with:
+          name: "🚀 HassanIDE v${{ needs.prepare.outputs.version }}"
+          tag_name: v${{ needs.prepare.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(needs.prepare.outputs.version, 'alpha') || contains(needs.prepare.outputs.version, 'beta') || contains(needs.prepare.outputs.version, 'dev') }}
+          generate_release_notes: true
+          files: release_files/*
+          body: |
+            # 🚀 HassanIDE v${{ needs.prepare.outputs.version }}
+            
+            ## محرر الأكواد العربي - بيئة التطوير المتكاملة
+            
+            ---
+            
+            ## 📥 التحميل
+            
+            ### 🪟 Windows
+            | المعمارية | نوع التثبيت | رابط التحميل |
+            |-----------|-------------|--------------|
+            | x64 (64-bit) | System Installer | انظر الملفات أدناه |
+            | x64 (64-bit) | User Installer | انظر الملفات أدناه |
+            | x64 (64-bit) | Portable (ZIP) | انظر الملفات أدناه |
+            | ARM64 | System Installer | انظر الملفات أدناه |
+            | ARM64 | User Installer | انظر الملفات أدناه |
+            
+            ### 🍎 macOS
+            | المعمارية | الوصف | رابط التحميل |
+            |-----------|-------|--------------|
+            | Intel (x64) | لأجهزة Mac القديمة | انظر الملفات أدناه |
+            | Apple Silicon (M1/M2/M3) | لأجهزة Mac الحديثة | انظر الملفات أدناه |
+            
+            ### 🐧 Linux
+            | المعمارية | نوع الحزمة | رابط التحميل |
+            |-----------|-----------|--------------|
+            | x64 | DEB (Ubuntu/Debian) | انظر الملفات أدناه |
+            | x64 | RPM (Fedora/RHEL) | انظر الملفات أدناه |
+            | x64 | AppImage (Universal) | انظر الملفات أدناه |
+            | x64 | tar.gz (Portable) | انظر الملفات أدناه |
+            | ARM64 | DEB (Ubuntu/Debian) | انظر الملفات أدناه |
+            
+            ---
+            
+            ## 📝 ملاحظات الإصدار
+            
+            راجع [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) للتفاصيل الكاملة.
+            
+            ---
+            
+            ## 🔑 تفعيل الترخيص
+            
+            1. افتح HassanIDE
+            2. اضغط `Ctrl+Shift+P` (أو `Cmd+Shift+P` على Mac)
+            3. اكتب "Activate License"
+            4. أدخل مفتاح الترخيص الخاص بك
+            
+            احصل على ترخيصك من: [hassanide.com/pricing](https://hassanide.com/pricing)
+            
+            ---
+            
+            ## 🐛 الإبلاغ عن مشكلة
+            
+            إذا واجهت أي مشكلة، يرجى فتح [issue جديد](https://github.com/${{ github.repository }}/issues/new).
+            
+            ---
+            
+            **معلومات البناء:**
+            - 📅 التاريخ: ${{ needs.prepare.outputs.build_date }}
+            - 🔖 الإصدار: ${{ needs.prepare.outputs.version }}
+            - 🔗 Commit: ${{ needs.prepare.outputs.short_sha }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ===========================================================================
+  # 📊 Job: ملخص البناء
+  # ===========================================================================
+  summary:
+    name: "📊 ملخص البناء"
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - build-windows-x64
+      - build-windows-arm64
+      - build-macos-x64
+      - build-macos-arm64
+      - build-linux-x64
+      - build-linux-arm64
+    if: always()
+    
+    steps:
+      - name: "📊 عرض نتائج البناء"
+        run: |
+          echo "=============================================="
+          echo "       📊 ملخص بناء HassanIDE"
+          echo "=============================================="
+          echo ""
+          echo "📦 الإصدار: ${{ needs.prepare.outputs.version }}"
+          echo "📅 التاريخ: $(date)"
+          echo ""
+          echo "=============================================="
+          echo "       📋 حالة كل منصة"
+          echo "=============================================="
+          echo ""
+          echo "🪟 Windows x64:    ${{ needs.build-windows-x64.result }}"
+          echo "🪟 Windows ARM64:  ${{ needs.build-windows-arm64.result }}"
+          echo "🍎 macOS x64:      ${{ needs.build-macos-x64.result }}"
+          echo "🍎 macOS ARM64:    ${{ needs.build-macos-arm64.result }}"
+          echo "🐧 Linux x64:      ${{ needs.build-linux-x64.result }}"
+          echo "🐧 Linux ARM64:    ${{ needs.build-linux-arm64.result }}"
+          echo ""
+          echo "=============================================="
+          
+          # التحقق من النجاح الكلي
+          if [[ "${{ needs.build-windows-x64.result }}" == "success" ]] || \
+             [[ "${{ needs.build-macos-x64.result }}" == "success" ]] || \
+             [[ "${{ needs.build-linux-x64.result }}" == "success" ]]; then
+            echo "✅ تم البناء بنجاح لمنصة واحدة على الأقل!"
+          else
+            echo "⚠️ لم ينجح أي بناء - يرجى مراجعة السجلات"
+          fi
+
+      - name: "📧 إرسال إشعار (اختياري)"
+        if: failure()
+        run: |
+          echo "⚠️ فشل البناء - يمكن إضافة إشعار بالبريد أو Slack هنا"
