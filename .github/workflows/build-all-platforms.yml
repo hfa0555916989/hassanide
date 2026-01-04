@@ -1,74 +1,93 @@
 # =============================================================================
-# HassanIDE - نظام البناء الشامل (2024-2025 Enterprise Best Practices)
+# HassanIDE - نظام البناء الشامل لجميع المنصات
 # =============================================================================
-# ✅ Best Practices Applied:
-# - Proper error handling (no blanket continue-on-error)
-# - Build verification steps
-# - Comprehensive logging
-# - Matrix strategy for efficiency
-# - Proper artifact paths based on VS Code build system
-# - Fail-fast disabled for parallel builds
+# الإصدار: 2.0.0 (2025)
+# يدعم: Windows, macOS, Linux (x64 و ARM64)
 # =============================================================================
 
 name: "🚀 Build HassanIDE - All Platforms"
 
+# =============================================================================
+# المُحفّزات (Triggers)
+# =============================================================================
 on:
   push:
-    branches: [main]
-    tags: ['v*']
-    paths-ignore: ['**.md', 'docs/**']
-  
+    branches:
+      - main
+    tags:
+      - 'v*'
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+
+  pull_request:
+    branches:
+      - main
+
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version number (e.g., 1.2.3)'
+        description: 'رقم الإصدار (مثل 1.2.3)'
         required: false
         default: ''
-      platforms:
-        description: 'Platforms to build'
-        type: choice
-        options:
-          - all
-          - windows
-          - macos
-          - linux
-        default: 'all'
+      skip_windows:
+        description: 'تخطي بناء Windows'
+        type: boolean
+        default: false
+      skip_macos:
+        description: 'تخطي بناء macOS'
+        type: boolean
+        default: false
+      skip_linux:
+        description: 'تخطي بناء Linux'
+        type: boolean
+        default: false
       create_release:
-        description: 'Create Release'
+        description: 'إنشاء Release'
         type: boolean
         default: false
 
+# =============================================================================
+# المتغيرات العامة
+# =============================================================================
 env:
   NODE_VERSION: '20'
   PYTHON_VERSION: '3.11'
   NPM_CONFIG_LEGACY_PEER_DEPS: 'true'
-  PRODUCT_NAME: 'HassanIDE'
-  # Performance optimizations
-  NODE_OPTIONS: '--max_old_space_size=8192'
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+  ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+  PRODUCT_NAME: 'HassanIDE'
 
+# =============================================================================
+# تقييد التشغيل المتزامن
+# =============================================================================
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# =============================================================================
+# الوظائف (Jobs)
+# =============================================================================
 jobs:
   # ===========================================================================
-  # 📋 Prepare Build Information
+  # 📋 تحضير البناء
   # ===========================================================================
   prepare:
-    name: "📋 Prepare"
+    name: "📋 Prepare Build"
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      is_release: ${{ steps.check.outputs.is_release }}
       short_sha: ${{ steps.info.outputs.short_sha }}
-    
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+      build_date: ${{ steps.info.outputs.build_date }}
 
-      - name: "🔢 Determine Version"
+    steps:
+      - name: "📥 Checkout code"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "🔢 Determine version"
         id: version
         run: |
           if [[ -n "${{ github.event.inputs.version }}" ]]; then
@@ -76,45 +95,34 @@ jobs:
           elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/v}"
           else
-            VERSION=$(node -p "require('./package.json').version")-dev.$(date +%Y%m%d)
+            VERSION=$(node -p "require('./package.json').version")-dev.$(date +%Y%m%d%H%M)
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "📦 Version: $VERSION"
 
-      - name: "🏷️ Check Release Type"
-        id: check
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]] || [[ "${{ github.event.inputs.create_release }}" == "true" ]]; then
-            echo "is_release=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_release=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: "📝 Build Info"
+      - name: "📝 Build info"
         id: info
         run: |
           echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "build_date=$(date +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
 
   # ===========================================================================
-  # 🪟 Windows Builds (Matrix Strategy)
+  # 🪟 بناء Windows
   # ===========================================================================
   build-windows:
     name: "🪟 Windows ${{ matrix.arch }}"
     runs-on: windows-latest
     needs: prepare
-    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'windows' || github.event.inputs.platforms == ''
+    if: github.event.inputs.skip_windows != 'true'
     timeout-minutes: 60
     
     strategy:
       fail-fast: false
       matrix:
         arch: [x64, arm64]
-    
-    env:
-      VSCODE_ARCH: ${{ matrix.arch }}
-      
+
     steps:
-      - name: "📥 Checkout"
+      - name: "📥 Checkout code"
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -130,108 +138,84 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: "🔧 Setup Build Tools"
+      - name: "📦 Install global dependencies"
         run: |
-          corepack enable
-          npm install -g node-gyp
+          npm install -g typescript ts-node node-gyp
+          npm install -g @vscode/vsce
+
+      - name: "🧹 Clean workspace"
+        run: |
+          if (Test-Path node_modules) { Remove-Item -Recurse -Force node_modules }
+          if (Test-Path .build) { Remove-Item -Recurse -Force .build }
+          npm cache clean --force
         shell: pwsh
 
-      - name: "📦 Install Dependencies"
-        id: install
+      - name: "📦 Install dependencies"
         run: |
-          npm ci --legacy-peer-deps 2>&1 | Tee-Object -FilePath install.log
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "npm ci failed, trying npm install..."
-            npm install --legacy-peer-deps 2>&1 | Tee-Object -Append -FilePath install.log
-          }
-          npm run postinstall 2>&1 | Tee-Object -Append -FilePath install.log
-        shell: pwsh
-        continue-on-error: true
-
-      - name: "📤 Upload Install Log on Failure"
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: install-log-windows-${{ matrix.arch }}
-          path: install.log
-          retention-days: 7
+          npm install --legacy-peer-deps --ignore-scripts
+          npm run postinstall || echo "Postinstall completed with warnings"
+        env:
+          npm_config_arch: ${{ matrix.arch }}
+          CHILD_CONCURRENCY: 1
 
       - name: "⚡ Download Electron"
-        run: |
-          npm run electron 2>&1 | Tee-Object -FilePath electron.log
-        shell: pwsh
-        continue-on-error: true
+        run: npm run electron
+        env:
+          npm_config_arch: ${{ matrix.arch }}
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 0
 
       - name: "🔨 Compile TypeScript"
-        id: compile
+        run: npm run compile
+
+      - name: "📦 Build VSCode Win32 ${{ matrix.arch }}"
         run: |
-          Write-Host "=== Starting TypeScript Compilation ==="
-          npm run compile 2>&1 | Tee-Object -FilePath compile.log
-          Write-Host "=== Compilation Complete ==="
-        shell: pwsh
+          npx gulp vscode-win32-${{ matrix.arch }}-min
+        env:
+          VSCODE_ARCH: ${{ matrix.arch }}
+
+      - name: "🔧 Build Inno Updater"
+        run: |
+          npx gulp vscode-win32-${{ matrix.arch }}-inno-updater
+        continue-on-error: true
+        env:
+          VSCODE_ARCH: ${{ matrix.arch }}
+
+      - name: "💿 Create System Setup"
+        run: |
+          npx gulp vscode-win32-${{ matrix.arch }}-system-setup
         continue-on-error: true
 
-      - name: "📦 Build VS Code Package"
-        id: build
+      - name: "💿 Create User Setup"
         run: |
-          Write-Host "=== Building VS Code win32-${{ matrix.arch }} ==="
-          npx gulp vscode-win32-${{ matrix.arch }}-min 2>&1 | Tee-Object -FilePath build.log
-          
-          # Verify build output
-          $buildPath = "..\VSCode-win32-${{ matrix.arch }}"
-          if (Test-Path $buildPath) {
-            Write-Host "✅ Build successful! Output directory exists."
-            Get-ChildItem $buildPath -Recurse | Measure-Object | Select-Object -ExpandProperty Count
-          } else {
-            Write-Host "❌ Build directory not found: $buildPath"
-            exit 1
-          }
-        shell: pwsh
-        continue-on-error: true
-
-      - name: "📤 Upload Build Log"
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log-windows-${{ matrix.arch }}
-          path: |
-            install.log
-            electron.log
-            compile.log
-            build.log
-          retention-days: 7
-          if-no-files-found: ignore
-
-      - name: "💿 Create Installers"
-        if: steps.build.outcome == 'success'
-        run: |
-          Write-Host "=== Creating Installers ==="
-          npx gulp vscode-win32-${{ matrix.arch }}-inno-updater 2>&1
-          npx gulp vscode-win32-${{ matrix.arch }}-system-setup 2>&1
-          npx gulp vscode-win32-${{ matrix.arch }}-user-setup 2>&1
-        shell: pwsh
+          npx gulp vscode-win32-${{ matrix.arch }}-user-setup
         continue-on-error: true
 
       - name: "📁 Create Portable ZIP"
-        if: steps.build.outcome == 'success'
         run: |
           $buildPath = "..\VSCode-win32-${{ matrix.arch }}"
-          $zipName = "HassanIDE-win32-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}.zip"
           if (Test-Path $buildPath) {
-            Write-Host "Creating portable ZIP: $zipName"
-            Compress-Archive -Path "$buildPath\*" -DestinationPath $zipName -Force
-            Write-Host "✅ ZIP created: $(Get-Item $zipName | Select-Object -ExpandProperty Length) bytes"
+            $version = "${{ needs.prepare.outputs.version }}"
+            Compress-Archive -Path "$buildPath\*" -DestinationPath "HassanIDE-win32-${{ matrix.arch }}-$version.zip" -Force
+            echo "✅ Created portable ZIP"
+          } else {
+            echo "⚠️ Build path not found: $buildPath"
+            Get-ChildItem -Path ".." -Directory | ForEach-Object { echo $_.FullName }
           }
         shell: pwsh
 
-      - name: "📊 List Build Outputs"
-        if: always()
+      - name: "📋 List build outputs"
         run: |
-          Write-Host "=== Build Outputs ==="
-          Get-ChildItem -Path . -Filter "*.zip" -File | ForEach-Object { Write-Host "ZIP: $($_.Name) - $($_.Length) bytes" }
-          if (Test-Path ".build\win32-${{ matrix.arch }}") {
-            Get-ChildItem -Path ".build\win32-${{ matrix.arch }}" -Recurse -File | ForEach-Object { Write-Host "BUILD: $($_.FullName)" }
-          }
+          echo "=== .build directory ==="
+          if (Test-Path .build) { Get-ChildItem -Recurse .build -Depth 3 } else { echo "No .build directory" }
+          echo ""
+          echo "=== Parent directory ==="
+          Get-ChildItem -Path ".." -Directory
+          echo ""
+          echo "=== Current directory ZIPs ==="
+          Get-ChildItem -Filter "*.zip"
+          echo ""
+          echo "=== EXE files ==="
+          Get-ChildItem -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 20
         shell: pwsh
 
       - name: "📤 Upload Artifacts"
@@ -241,30 +225,34 @@ jobs:
           path: |
             .build/win32-${{ matrix.arch }}/system-setup/*.exe
             .build/win32-${{ matrix.arch }}/user-setup/*.exe
+            .build/win32-${{ matrix.arch }}/archive/*.zip
             HassanIDE-win32-${{ matrix.arch }}-*.zip
           retention-days: 30
           if-no-files-found: warn
 
   # ===========================================================================
-  # 🍎 macOS Builds (Matrix Strategy)
+  # 🍎 بناء macOS
   # ===========================================================================
   build-macos:
     name: "🍎 macOS ${{ matrix.arch }}"
-    runs-on: macos-14
+    runs-on: ${{ matrix.runner }}
     needs: prepare
-    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'macos' || github.event.inputs.platforms == ''
+    if: github.event.inputs.skip_macos != 'true'
     timeout-minutes: 60
-    
+
     strategy:
       fail-fast: false
       matrix:
-        arch: [x64, arm64]
-    
-    env:
-      VSCODE_ARCH: ${{ matrix.arch }}
-      
+        include:
+          - arch: x64
+            runner: macos-13
+            electron_arch: x64
+          - arch: arm64
+            runner: macos-14
+            electron_arch: arm64
+
     steps:
-      - name: "📥 Checkout"
+      - name: "📥 Checkout code"
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -280,81 +268,70 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: "🔧 Setup Build Tools"
+      - name: "📦 Install global dependencies"
         run: |
-          corepack enable
+          npm install -g typescript ts-node node-gyp
           brew install create-dmg || true
 
-      - name: "📦 Install Dependencies"
-        id: install
+      - name: "🧹 Clean workspace"
         run: |
-          echo "=== Installing Dependencies ==="
-          npm ci --legacy-peer-deps 2>&1 | tee install.log || npm install --legacy-peer-deps 2>&1 | tee -a install.log
-          npm run postinstall 2>&1 | tee -a install.log || true
-        continue-on-error: true
+          rm -rf node_modules .build || true
+          npm cache clean --force
+
+      - name: "📦 Install dependencies"
+        run: |
+          npm install --legacy-peer-deps --ignore-scripts
+          npm run postinstall || echo "Postinstall completed with warnings"
+        env:
+          npm_config_arch: ${{ matrix.arch }}
 
       - name: "⚡ Download Electron"
-        run: |
-          echo "=== Downloading Electron for ${{ matrix.arch }} ==="
-          npm run electron 2>&1 | tee electron.log
-        continue-on-error: true
+        run: npm run electron
+        env:
+          npm_config_arch: ${{ matrix.arch }}
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 0
 
       - name: "🔨 Compile TypeScript"
-        id: compile
-        run: |
-          echo "=== Compiling TypeScript ==="
-          npm run compile 2>&1 | tee compile.log
-        continue-on-error: true
+        run: npm run compile
 
-      - name: "📦 Build VS Code Package"
-        id: build
+      - name: "📦 Build VSCode Darwin ${{ matrix.arch }}"
         run: |
-          echo "=== Building VS Code darwin-${{ matrix.arch }} ==="
-          npx gulp vscode-darwin-${{ matrix.arch }}-min 2>&1 | tee build.log
-          
-          # Verify build output
-          BUILD_PATH="../VSCode-darwin-${{ matrix.arch }}"
-          if [ -d "$BUILD_PATH" ]; then
-            echo "✅ Build successful!"
-            ls -la "$BUILD_PATH"
-          else
-            echo "❌ Build directory not found: $BUILD_PATH"
-            exit 1
-          fi
-        continue-on-error: true
-
-      - name: "📤 Upload Build Logs"
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log-macos-${{ matrix.arch }}
-          path: |
-            install.log
-            electron.log
-            compile.log
-            build.log
-          retention-days: 7
-          if-no-files-found: ignore
+          npx gulp vscode-darwin-${{ matrix.arch }}-min
+        env:
+          VSCODE_ARCH: ${{ matrix.arch }}
 
       - name: "💿 Create DMG"
-        if: steps.build.outcome == 'success'
         run: |
-          echo "=== Creating DMG ==="
-          npx gulp vscode-darwin-${{ matrix.arch }}-build-dmg 2>&1 || true
+          npx gulp vscode-darwin-${{ matrix.arch }}-build-dmg || echo "DMG creation skipped"
         continue-on-error: true
 
-      - name: "📁 Create ZIP"
-        if: steps.build.outcome == 'success'
+      - name: "📁 Create ZIP Archive"
         run: |
           BUILD_PATH="../VSCode-darwin-${{ matrix.arch }}"
-          ZIP_NAME="HassanIDE-darwin-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}.zip"
+          VERSION="${{ needs.prepare.outputs.version }}"
+          
           if [ -d "$BUILD_PATH" ]; then
-            echo "Creating ZIP: $ZIP_NAME"
             cd ..
-            zip -r -y "hassanide/$ZIP_NAME" "VSCode-darwin-${{ matrix.arch }}"
-            cd hassanide
-            ls -lh "$ZIP_NAME"
+            zip -r -y "hassanide/HassanIDE-darwin-${{ matrix.arch }}-$VERSION.zip" "VSCode-darwin-${{ matrix.arch }}"
+            echo "✅ Created ZIP archive"
+          else
+            echo "⚠️ Build path not found: $BUILD_PATH"
+            ls -la ..
           fi
+
+      - name: "📋 List build outputs"
+        run: |
+          echo "=== .build directory ==="
+          ls -la .build/ 2>/dev/null || echo "No .build directory"
+          echo ""
+          echo "=== Parent directory ==="
+          ls -la ../
+          echo ""
+          echo "=== DMG files ==="
+          find . -name "*.dmg" 2>/dev/null || echo "No DMG files"
+          echo ""
+          echo "=== ZIP files ==="
+          find . -name "*.zip" 2>/dev/null || echo "No ZIP files"
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
@@ -362,30 +339,28 @@ jobs:
           name: hassanide-macos-${{ matrix.arch }}
           path: |
             .build/darwin-${{ matrix.arch }}/*.dmg
+            .build/darwin/*.dmg
             HassanIDE-darwin-${{ matrix.arch }}-*.zip
           retention-days: 30
           if-no-files-found: warn
 
   # ===========================================================================
-  # 🐧 Linux Builds (Matrix Strategy)
+  # 🐧 بناء Linux
   # ===========================================================================
   build-linux:
     name: "🐧 Linux ${{ matrix.arch }}"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: prepare
-    if: github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'linux' || github.event.inputs.platforms == ''
+    if: github.event.inputs.skip_linux != 'true'
     timeout-minutes: 60
-    
+
     strategy:
       fail-fast: false
       matrix:
         arch: [x64, arm64]
-    
-    env:
-      VSCODE_ARCH: ${{ matrix.arch }}
-      
+
     steps:
-      - name: "📥 Checkout"
+      - name: "📥 Checkout code"
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -401,207 +376,198 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: "🔧 Install Linux Dependencies"
+      - name: "🔧 Install system dependencies"
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
+            g++ \
             libx11-dev \
             libxkbfile-dev \
             libsecret-1-dev \
             libkrb5-dev \
+            libgtk-3-dev \
+            libnss3-dev \
+            libgdk-pixbuf2.0-dev \
+            libatk-bridge2.0-dev \
+            libatspi2.0-dev \
+            libdrm-dev \
+            libgbm-dev \
             fakeroot \
             rpm \
             dpkg \
-            libfuse2 || true
-          corepack enable
+            dpkg-dev \
+            libfuse2 \
+            zsync \
+            pkg-config
 
-      - name: "📦 Install Dependencies"
-        id: install
+      - name: "🔧 Install ARM64 cross-compilation tools"
+        if: matrix.arch == 'arm64'
         run: |
-          echo "=== Installing Dependencies ==="
-          npm ci --legacy-peer-deps 2>&1 | tee install.log || npm install --legacy-peer-deps 2>&1 | tee -a install.log
-          npm run postinstall 2>&1 | tee -a install.log || true
-        continue-on-error: true
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            crossbuild-essential-arm64
+
+      - name: "📦 Install global dependencies"
+        run: |
+          npm install -g typescript ts-node node-gyp
+
+      - name: "🧹 Clean workspace"
+        run: |
+          rm -rf node_modules .build || true
+          npm cache clean --force
+
+      - name: "📦 Install dependencies"
+        run: |
+          npm install --legacy-peer-deps --ignore-scripts
+          npm run postinstall || echo "Postinstall completed with warnings"
+        env:
+          npm_config_arch: ${{ matrix.arch }}
+          CC: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-gcc' || 'gcc' }}
+          CXX: ${{ matrix.arch == 'arm64' && 'aarch64-linux-gnu-g++' || 'g++' }}
 
       - name: "⚡ Download Electron"
-        run: |
-          echo "=== Downloading Electron ==="
-          npm run electron 2>&1 | tee electron.log
-        continue-on-error: true
+        run: npm run electron
+        env:
+          npm_config_arch: ${{ matrix.arch }}
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 0
 
       - name: "🔨 Compile TypeScript"
-        id: compile
+        run: npm run compile
+
+      - name: "📦 Build VSCode Linux ${{ matrix.arch }}"
         run: |
-          echo "=== Compiling TypeScript ==="
-          npm run compile 2>&1 | tee compile.log
+          npx gulp vscode-linux-${{ matrix.arch }}-min
+        env:
+          VSCODE_ARCH: ${{ matrix.arch }}
+
+      - name: "📦 Create DEB package"
+        run: |
+          npx gulp vscode-linux-${{ matrix.arch }}-prepare-deb || true
+          npx gulp vscode-linux-${{ matrix.arch }}-build-deb || echo "DEB creation skipped"
         continue-on-error: true
 
-      - name: "📦 Build VS Code Package"
-        id: build
+      - name: "📦 Create RPM package"
         run: |
-          echo "=== Building VS Code linux-${{ matrix.arch }} ==="
-          npx gulp vscode-linux-${{ matrix.arch }}-min 2>&1 | tee build.log
+          npx gulp vscode-linux-${{ matrix.arch }}-build-rpm || echo "RPM creation skipped"
+        continue-on-error: true
+
+      - name: "📁 Create tar.gz Archive"
+        run: |
+          BUILD_PATH="../VSCode-linux-${{ matrix.arch }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
           
-          # Verify build output
-          BUILD_PATH="../VSCode-linux-${{ matrix.arch }}"
           if [ -d "$BUILD_PATH" ]; then
-            echo "✅ Build successful!"
-            ls -la "$BUILD_PATH"
+            tar -czvf "HassanIDE-linux-${{ matrix.arch }}-$VERSION.tar.gz" -C .. "VSCode-linux-${{ matrix.arch }}"
+            echo "✅ Created tar.gz archive"
           else
-            echo "❌ Build directory not found: $BUILD_PATH"
-            exit 1
+            echo "⚠️ Build path not found: $BUILD_PATH"
+            ls -la ..
           fi
-        continue-on-error: true
 
-      - name: "📤 Upload Build Logs"
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log-linux-${{ matrix.arch }}
-          path: |
-            install.log
-            electron.log
-            compile.log
-            build.log
-          retention-days: 7
-          if-no-files-found: ignore
-
-      - name: "📦 Create DEB Package"
-        if: steps.build.outcome == 'success'
+      - name: "📦 Create AppImage"
+        if: matrix.arch == 'x64'
         run: |
-          echo "=== Creating DEB Package ==="
-          npx gulp vscode-linux-${{ matrix.arch }}-build-deb 2>&1 || true
-        continue-on-error: true
-
-      - name: "📦 Create RPM Package"
-        if: steps.build.outcome == 'success' && matrix.arch == 'x64'
-        run: |
-          echo "=== Creating RPM Package ==="
-          npx gulp vscode-linux-${{ matrix.arch }}-build-rpm 2>&1 || true
-        continue-on-error: true
-
-      - name: "📁 Create TAR.GZ"
-        if: steps.build.outcome == 'success'
-        run: |
+          # Download appimagetool
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool
+          chmod +x appimagetool
+          
           BUILD_PATH="../VSCode-linux-${{ matrix.arch }}"
-          TAR_NAME="HassanIDE-linux-${{ matrix.arch }}-${{ needs.prepare.outputs.version }}.tar.gz"
+          VERSION="${{ needs.prepare.outputs.version }}"
+          
           if [ -d "$BUILD_PATH" ]; then
-            echo "Creating tarball: $TAR_NAME"
-            tar -czvf "$TAR_NAME" -C .. "VSCode-linux-${{ matrix.arch }}"
-            ls -lh "$TAR_NAME"
+            # Create AppDir structure
+            APPDIR="HassanIDE.AppDir"
+            mkdir -p "$APPDIR/usr/bin"
+            mkdir -p "$APPDIR/usr/share/applications"
+            mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
+            
+            # Copy files
+            cp -r $BUILD_PATH/* "$APPDIR/usr/bin/"
+            
+            # Create desktop entry
+            cat > "$APPDIR/hassanide.desktop" << 'DESKTOP'
+[Desktop Entry]
+Name=HassanIDE
+Comment=Code Editor
+Exec=hassanide %F
+Icon=hassanide
+Type=Application
+Categories=Development;IDE;TextEditor;
+StartupNotify=true
+StartupWMClass=HassanIDE
+MimeType=text/plain;
+DESKTOP
+            
+            # Copy icon
+            if [ -f "resources/linux/code.png" ]; then
+              cp resources/linux/code.png "$APPDIR/hassanide.png"
+              cp resources/linux/code.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/hassanide.png"
+            fi
+            
+            # Link desktop file
+            cp "$APPDIR/hassanide.desktop" "$APPDIR/usr/share/applications/"
+            
+            # Create AppRun
+            cat > "$APPDIR/AppRun" << 'APPRUN'
+#!/bin/bash
+SELF=$(readlink -f "$0")
+HERE=${SELF%/*}
+export PATH="${HERE}/usr/bin/:${PATH}"
+export LD_LIBRARY_PATH="${HERE}/usr/lib/:${LD_LIBRARY_PATH}"
+exec "${HERE}/usr/bin/code" "$@"
+APPRUN
+            chmod +x "$APPDIR/AppRun"
+            
+            # Build AppImage
+            ARCH=x86_64 ./appimagetool "$APPDIR" "HassanIDE-linux-x64-$VERSION.AppImage" || echo "AppImage creation failed"
           fi
+        continue-on-error: true
+
+      - name: "📋 List build outputs"
+        run: |
+          echo "=== .build directory ==="
+          ls -la .build/ 2>/dev/null || echo "No .build directory"
+          find .build -type f -name "*.deb" -o -name "*.rpm" 2>/dev/null || true
+          echo ""
+          echo "=== Parent directory ==="
+          ls -la ../
+          echo ""
+          echo "=== Archive files ==="
+          ls -la *.tar.gz *.AppImage 2>/dev/null || echo "No archives"
 
       - name: "📤 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
           name: hassanide-linux-${{ matrix.arch }}
           path: |
-            .build/linux/deb/*/*.deb
-            .build/linux/rpm/*/*.rpm
+            .build/linux/deb/**/*.deb
+            .build/linux/rpm/**/*.rpm
             HassanIDE-linux-${{ matrix.arch }}-*.tar.gz
+            HassanIDE-linux-${{ matrix.arch }}-*.AppImage
           retention-days: 30
           if-no-files-found: warn
 
   # ===========================================================================
-  # 📊 Build Summary
-  # ===========================================================================
-  summary:
-    name: "📊 Build Summary"
-    runs-on: ubuntu-latest
-    needs: [prepare, build-windows, build-macos, build-linux]
-    if: always()
-    
-    steps:
-      - name: "📊 Generate Build Report"
-        run: |
-          echo "=============================================="
-          echo "       🚀 HassanIDE Build Report"
-          echo "=============================================="
-          echo ""
-          echo "📦 Version: ${{ needs.prepare.outputs.version }}"
-          echo "🔖 Commit: ${{ needs.prepare.outputs.short_sha }}"
-          echo "📅 Date: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-          echo "🏷️ Release: ${{ needs.prepare.outputs.is_release }}"
-          echo ""
-          echo "Build Results:"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🪟 Windows:  ${{ needs.build-windows.result }}"
-          echo "🍎 macOS:    ${{ needs.build-macos.result }}"
-          echo "🐧 Linux:    ${{ needs.build-linux.result }}"
-          echo "=============================================="
-
-      - name: "📥 Download All Artifacts"
-        uses: actions/download-artifact@v4
-        with:
-          path: all-artifacts
-        continue-on-error: true
-
-      - name: "📋 List All Artifacts"
-        run: |
-          echo "=== All Build Artifacts ==="
-          find all-artifacts -type f 2>/dev/null | head -100 || echo "No artifacts found"
-
-  # ===========================================================================
-  # 🎉 Create Release (only on tags)
-  # ===========================================================================
-  release:
-    name: "🎉 Create Release"
-    runs-on: ubuntu-latest
-    needs: [prepare, build-windows, build-macos, build-linux]
-    if: needs.prepare.outputs.is_release == 'true'
-    
-    steps:
-      - name: "📥 Download All Artifacts"
-        uses: actions/download-artifact@v4
-        with:
-          path: release-artifacts
-
-      - name: "📋 Prepare Release Files"
-        run: |
-          mkdir -p release-files
-          find release-artifacts -type f \( -name "*.exe" -o -name "*.zip" -o -name "*.dmg" -o -name "*.deb" -o -name "*.rpm" -o -name "*.tar.gz" \) -exec cp {} release-files/ \;
-          echo "=== Release Files ==="
-          ls -lh release-files/ || echo "No release files found"
-
-      - name: "🎉 Create GitHub Release"
-        uses: softprops/action-gh-release@v1
-        with:
-          name: "HassanIDE v${{ needs.prepare.outputs.version }}"
-          body: |
-            ## 🚀 HassanIDE v${{ needs.prepare.outputs.version }}
-            
-            ### Downloads
-            
-            | Platform | Architecture | File |
-            |----------|--------------|------|
-            | Windows | x64 | HassanIDE-win32-x64-*.exe |
-            | Windows | ARM64 | HassanIDE-win32-arm64-*.exe |
-            | macOS | Intel | HassanIDE-darwin-x64-*.dmg |
-            | macOS | Apple Silicon | HassanIDE-darwin-arm64-*.dmg |
-            | Linux | x64 | HassanIDE-linux-x64-*.tar.gz |
-            | Linux | ARM64 | HassanIDE-linux-arm64-*.tar.gz |
-            
-            ### Changes
-            See [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
-          files: release-files/*
-          draft: false
-          prerelease: ${{ contains(needs.prepare.outputs.version, 'dev') || contains(needs.prepare.outputs.version, 'beta') }}
-          fail_on_unmatched_files: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # ===========================================================================
-  # 🌐 Upload to Website (public_html)
+  # 🌐 رفع الملفات للموقع (تلقائي عند نجاح البناء)
   # ===========================================================================
   upload-to-website:
     name: "🌐 Upload to Website"
     runs-on: ubuntu-latest
-    needs: [prepare, build-windows, build-macos, build-linux]
+    needs:
+      - prepare
+      - build-windows
+      - build-macos
+      - build-linux
     if: |
       always() && 
       (needs.build-windows.result == 'success' || needs.build-macos.result == 'success' || needs.build-linux.result == 'success')
     
+    permissions:
+      contents: write
+      pages: write
+
     steps:
       - name: "📥 Checkout Repository"
         uses: actions/checkout@v4
@@ -655,7 +621,7 @@ jobs:
           BUILD_DATE=$(date +'%Y-%m-%d')
           DOWNLOADS_DIR="public_html/downloads"
           
-          # إنشاء versions.json جديد أو تحديثه
+          # إنشاء versions.json
           cat > "$DOWNLOADS_DIR/versions.json" << EOF
           {
             "latest": "$VERSION",
@@ -685,13 +651,11 @@ jobs:
           EOF
           
           echo "✅ versions.json updated"
-          cat "$DOWNLOADS_DIR/versions.json"
 
-      - name: "📝 Generate Download Page (index.html)"
+      - name: "📝 Generate Download Page"
         if: steps.prepare-files.outputs.file_count > 0
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          BUILD_DATE=$(date +'%Y-%m-%d')
           DOWNLOADS_DIR="public_html/downloads"
           
           cat > "$DOWNLOADS_DIR/index.html" << 'HTMLEOF'
@@ -719,12 +683,7 @@ jobs:
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
               }
-              .subtitle {
-                text-align: center;
-                color: #88c0d0;
-                margin-bottom: 40px;
-                font-size: 1.2rem;
-              }
+              .subtitle { text-align: center; color: #88c0d0; margin-bottom: 40px; font-size: 1.2rem; }
               .version-badge {
                 display: inline-block;
                 background: #7b2cbf;
@@ -768,12 +727,7 @@ jobs:
               }
               .download-btn:hover { opacity: 0.8; }
               .arch { font-size: 0.8rem; opacity: 0.8; }
-              footer {
-                text-align: center;
-                margin-top: 40px;
-                padding: 20px;
-                color: #88c0d0;
-              }
+              footer { text-align: center; margin-top: 40px; padding: 20px; color: #88c0d0; }
             </style>
           </head>
           <body>
@@ -785,51 +739,30 @@ jobs:
               </div>
               
               <div class="platforms">
-                <!-- Windows -->
                 <div class="platform-card">
                   <div class="platform-icon">🪟</div>
                   <div class="platform-name">Windows</div>
-                  <div class="download-links" id="windows-downloads">
-                    <a href="#" class="download-btn" id="win-x64">
-                      <span>تحميل x64</span>
-                      <span class="arch">64-bit</span>
-                    </a>
-                    <a href="#" class="download-btn" id="win-arm64">
-                      <span>تحميل ARM64</span>
-                      <span class="arch">ARM</span>
-                    </a>
+                  <div class="download-links">
+                    <a href="#" class="download-btn" id="win-x64"><span>تحميل x64</span><span class="arch">64-bit</span></a>
+                    <a href="#" class="download-btn" id="win-arm64"><span>تحميل ARM64</span><span class="arch">ARM</span></a>
                   </div>
                 </div>
                 
-                <!-- macOS -->
                 <div class="platform-card">
                   <div class="platform-icon">🍎</div>
                   <div class="platform-name">macOS</div>
-                  <div class="download-links" id="macos-downloads">
-                    <a href="#" class="download-btn" id="mac-x64">
-                      <span>تحميل Intel</span>
-                      <span class="arch">x64</span>
-                    </a>
-                    <a href="#" class="download-btn" id="mac-arm64">
-                      <span>تحميل Apple Silicon</span>
-                      <span class="arch">M1/M2/M3</span>
-                    </a>
+                  <div class="download-links">
+                    <a href="#" class="download-btn" id="mac-x64"><span>تحميل Intel</span><span class="arch">x64</span></a>
+                    <a href="#" class="download-btn" id="mac-arm64"><span>تحميل Apple Silicon</span><span class="arch">M1/M2/M3</span></a>
                   </div>
                 </div>
                 
-                <!-- Linux -->
                 <div class="platform-card">
                   <div class="platform-icon">🐧</div>
                   <div class="platform-name">Linux</div>
-                  <div class="download-links" id="linux-downloads">
-                    <a href="#" class="download-btn" id="linux-x64">
-                      <span>تحميل x64</span>
-                      <span class="arch">64-bit</span>
-                    </a>
-                    <a href="#" class="download-btn" id="linux-arm64">
-                      <span>تحميل ARM64</span>
-                      <span class="arch">ARM</span>
-                    </a>
+                  <div class="download-links">
+                    <a href="#" class="download-btn" id="linux-x64"><span>تحميل x64</span><span class="arch">64-bit</span></a>
+                    <a href="#" class="download-btn" id="linux-arm64"><span>تحميل ARM64</span><span class="arch">ARM</span></a>
                   </div>
                 </div>
               </div>
@@ -847,28 +780,20 @@ jobs:
                   const v = data.versions[0];
                   document.getElementById('version-badge').textContent = 'الإصدار ' + v.version;
                   document.getElementById('last-update').textContent = v.date;
-                  
-                  // Windows
                   document.getElementById('win-x64').href = v.downloads.windows.x64;
                   document.getElementById('win-arm64').href = v.downloads.windows.arm64;
-                  
-                  // macOS
                   document.getElementById('mac-x64').href = v.downloads.macos.x64;
                   document.getElementById('mac-arm64').href = v.downloads.macos.arm64;
-                  
-                  // Linux
                   document.getElementById('linux-x64').href = v.downloads.linux.x64;
                   document.getElementById('linux-arm64').href = v.downloads.linux.arm64;
                 })
-                .catch(e => console.error('Error loading versions:', e));
+                .catch(e => console.error('Error:', e));
             </script>
           </body>
           </html>
           HTMLEOF
-          
-          echo "✅ index.html generated"
 
-      - name: "📤 Commit and Push to Repository"
+      - name: "📤 Commit and Push"
         if: steps.prepare-files.outputs.file_count > 0
         run: |
           git config user.name "GitHub Actions Bot"
@@ -879,7 +804,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            git commit -m "🚀 Auto-deploy: HassanIDE ${{ needs.prepare.outputs.version }} builds"
+            git commit -m "🚀 Auto-deploy: HassanIDE ${{ needs.prepare.outputs.version }}"
             git push origin main
             echo "✅ Files pushed to repository"
           fi
@@ -890,18 +815,138 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public_html
-          destination_dir: ./
           keep_files: true
         continue-on-error: true
 
-      - name: "📊 Upload Summary"
+  # ===========================================================================
+  # 🎉 إنشاء Release
+  # ===========================================================================
+  create-release:
+    name: "🎉 Create Release"
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - build-windows
+      - build-macos
+      - build-linux
+    if: |
+      always() &&
+      (startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true') &&
+      (needs.build-windows.result == 'success' || needs.build-macos.result == 'success' || needs.build-linux.result == 'success')
+    
+    permissions:
+      contents: write
+
+    steps:
+      - name: "📥 Checkout code"
+        uses: actions/checkout@v4
+
+      - name: "📥 Download all artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: false
+
+      - name: "📋 List downloaded artifacts"
+        run: |
+          echo "=== All artifacts ==="
+          find artifacts -type f | head -100
+          echo ""
+          echo "=== Sizes ==="
+          du -sh artifacts/*/ 2>/dev/null || echo "No artifact directories"
+
+      - name: "📁 Prepare release files"
+        run: |
+          mkdir -p release_files
+          
+          find artifacts -type f \( \
+            -name "*.exe" -o \
+            -name "*.dmg" -o \
+            -name "*.deb" -o \
+            -name "*.rpm" -o \
+            -name "*.AppImage" -o \
+            -name "*.tar.gz" -o \
+            -name "*.zip" \
+          \) -exec cp {} release_files/ \;
+          
+          echo "=== Release files ==="
+          ls -la release_files/
+
+      - name: "🎉 Create GitHub Release"
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "🚀 HassanIDE v${{ needs.prepare.outputs.version }}"
+          tag_name: v${{ needs.prepare.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(needs.prepare.outputs.version, 'dev') || contains(needs.prepare.outputs.version, 'alpha') || contains(needs.prepare.outputs.version, 'beta') }}
+          generate_release_notes: true
+          files: release_files/*
+          body: |
+            # 🚀 HassanIDE v${{ needs.prepare.outputs.version }}
+            
+            ## 📥 Downloads
+            
+            ### 🪟 Windows
+            - **x64**: For most Windows PCs
+            - **ARM64**: For Windows on ARM devices
+            
+            ### 🍎 macOS
+            - **Intel (x64)**: For older Macs (pre-2020)
+            - **Apple Silicon (ARM64)**: For M1/M2/M3/M4 Macs
+            
+            ### 🐧 Linux
+            - **x64 DEB**: For Ubuntu/Debian
+            - **x64 RPM**: For Fedora/RHEL
+            - **x64 AppImage**: Universal Linux
+            - **x64 tar.gz**: Portable
+            
+            ---
+            
+            📅 **Build Date:** ${{ needs.prepare.outputs.build_date }}
+            🔗 **Commit:** ${{ needs.prepare.outputs.short_sha }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ===========================================================================
+  # 📊 ملخص البناء
+  # ===========================================================================
+  build-summary:
+    name: "📊 Build Summary"
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - build-windows
+      - build-macos
+      - build-linux
+    if: always()
+
+    steps:
+      - name: "📊 Display build results"
         run: |
           echo "=============================================="
-          echo "       🌐 Website Upload Complete"
+          echo "       📊 HassanIDE Build Summary"
           echo "=============================================="
           echo ""
           echo "📦 Version: ${{ needs.prepare.outputs.version }}"
-          echo "📁 Files uploaded: ${{ steps.prepare-files.outputs.file_count }}"
+          echo "📅 Date: $(date)"
+          echo "🔗 Commit: ${{ needs.prepare.outputs.short_sha }}"
           echo ""
-          echo "🌐 Download page: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/downloads/"
           echo "=============================================="
+          echo "       📋 Platform Status"
+          echo "=============================================="
+          echo ""
+          echo "🪟 Windows: ${{ needs.build-windows.result }}"
+          echo "🍎 macOS:   ${{ needs.build-macos.result }}"
+          echo "🐧 Linux:   ${{ needs.build-linux.result }}"
+          echo ""
+          echo "=============================================="
+          
+          if [[ "${{ needs.build-windows.result }}" == "success" ]] || \
+             [[ "${{ needs.build-macos.result }}" == "success" ]] || \
+             [[ "${{ needs.build-linux.result }}" == "success" ]]; then
+            echo "✅ Build completed successfully for at least one platform!"
+            exit 0
+          else
+            echo "❌ All builds failed!"
+            exit 1
+          fi
