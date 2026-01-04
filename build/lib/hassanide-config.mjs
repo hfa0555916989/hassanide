@@ -1,4 +1,8 @@
 /*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Hassan Tech. All rights reserved.
+ *  Licensed under the Proprietary License. See LICENSE-HASSANIDE.txt for license information.
+ *--------------------------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------------------------
  *  Hassan IDE Build Configuration
  *  This file contains build settings for Hassan IDE
  *--------------------------------------------------------------------------------------------*/

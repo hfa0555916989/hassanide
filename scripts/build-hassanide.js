@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 /*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Hassan Tech. All rights reserved.
+ *  Licensed under the Proprietary License. See LICENSE-HASSANIDE.txt for license information.
+ *--------------------------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------------------------
  *  Hassan IDE Build Script
  *  Builds Hassan IDE for Windows, macOS, and Linux
  *--------------------------------------------------------------------------------------------*/
@@ -222,24 +226,50 @@ async function main() {
 		}
 
 		// Build platforms
+		const crossBuild = platforms.includes('--cross') || platforms.includes('-x');
+
 		if (buildWindows) {
 			if (buildPlatform('win32', 'x64')) {
-				createWindowsInstaller('x64');
+				if (process.platform === 'win32') {
+					createWindowsInstaller('x64');
+				} else {
+					logInfo('Skipping Windows installer (requires Windows)');
+				}
 			}
 		}
 
-		if (buildMac && process.platform === 'darwin') {
-			if (buildPlatform('darwin', 'x64')) {
-				createMacDMG('x64');
-			}
-			if (buildPlatform('darwin', 'arm64')) {
-				createMacDMG('arm64');
+		if (buildMac) {
+			if (process.platform === 'darwin' || crossBuild) {
+				if (buildPlatform('darwin', 'x64')) {
+					if (process.platform === 'darwin') {
+						createMacDMG('x64');
+					} else {
+						logInfo('Skipping macOS DMG (requires macOS for signing/packaging)');
+					}
+				}
+				if (buildPlatform('darwin', 'arm64')) {
+					if (process.platform === 'darwin') {
+						createMacDMG('arm64');
+					} else {
+						logInfo('Skipping macOS ARM64 DMG (requires macOS for signing/packaging)');
+					}
+				}
+			} else {
+				logInfo('Use --cross or -x flag to build macOS from Windows/Linux');
 			}
 		}
 
-		if (buildLinux && process.platform === 'linux') {
-			if (buildPlatform('linux', 'x64')) {
-				createLinuxPackages('x64');
+		if (buildLinux) {
+			if (process.platform === 'linux' || crossBuild) {
+				if (buildPlatform('linux', 'x64')) {
+					if (process.platform === 'linux') {
+						createLinuxPackages('x64');
+					} else {
+						logInfo('Skipping Linux packages (requires Linux for .deb/.rpm)');
+					}
+				}
+			} else {
+				logInfo('Use --cross or -x flag to build Linux from Windows/macOS');
 			}
 		}
 

@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 /*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Hassan Tech. All rights reserved.
+ *  Licensed under the Proprietary License. See LICENSE-HASSANIDE.txt for license information.
+ *--------------------------------------------------------------------------------------------*/
+/*---------------------------------------------------------------------------------------------
  *  Hassan IDE - Icon Converter Script
  *  Converts SVG icons to platform-specific formats (ICO, ICNS, PNG)
  *  Note: Requires ImageMagick or similar tool installed on the system

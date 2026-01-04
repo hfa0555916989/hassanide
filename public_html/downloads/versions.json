@@ -1,52 +1,66 @@
 {
-    "latest": "1.0.0",
+    "latest": "1.108.0",
     "releaseDate": "2026-01-04",
     "windows": {
         "x64": {
-            "installer": "HassanIDESetup-x64.exe",
-            "portable": "HassanIDE-win32-x64.zip",
-            "size": "85 MB",
+            "installer": "HassanIDESetup-x64-1.108.0.exe",
+            "portable": "HassanIDE-win32-x64-1.108.0.zip",
+            "size": "~120 MB",
             "sha256": ""
         },
         "arm64": {
-            "installer": "HassanIDESetup-arm64.exe",
-            "portable": "HassanIDE-win32-arm64.zip",
-            "size": "82 MB",
+            "installer": "HassanIDESetup-arm64-1.108.0.exe",
+            "portable": "HassanIDE-win32-arm64-1.108.0.zip",
+            "size": "~115 MB",
             "sha256": ""
         }
     },
     "darwin": {
         "x64": {
-            "dmg": "HassanIDE-darwin-x64.dmg",
-            "zip": "HassanIDE-darwin-x64.zip",
-            "size": "95 MB",
+            "dmg": "HassanIDE-darwin-x64-1.108.0.dmg",
+            "zip": "HassanIDE-darwin-x64-1.108.0.zip",
+            "size": "~130 MB",
             "sha256": ""
         },
         "arm64": {
-            "dmg": "HassanIDE-darwin-arm64.dmg",
-            "zip": "HassanIDE-darwin-arm64.zip",
-            "size": "90 MB",
+            "dmg": "HassanIDE-darwin-arm64-1.108.0.dmg",
+            "zip": "HassanIDE-darwin-arm64-1.108.0.zip",
+            "size": "~125 MB",
             "sha256": ""
         }
     },
     "linux": {
         "x64": {
-            "deb": "hassanide_amd64.deb",
-            "rpm": "hassanide_x86_64.rpm",
-            "tar": "hassanide-linux-x64.tar.gz",
-            "size": "80 MB",
+            "deb": "hassanide_1.108.0_amd64.deb",
+            "rpm": "hassanide-1.108.0.x86_64.rpm",
+            "tar": "hassanide-linux-x64-1.108.0.tar.gz",
+            "size": "~100 MB",
+            "sha256": ""
+        },
+        "arm64": {
+            "deb": "hassanide_1.108.0_arm64.deb",
+            "rpm": "hassanide-1.108.0.aarch64.rpm",
+            "tar": "hassanide-linux-arm64-1.108.0.tar.gz",
+            "size": "~95 MB",
             "sha256": ""
         }
     },
     "changelog": {
-        "1.0.0": {
+        "1.108.0": {
             "date": "2026-01-04",
             "changes": [
-                "الإصدار الأول من Hassan IDE",
-                "دعم كامل للغة العربية",
-                "نظام الترخيص والاشتراكات",
+                "الإصدار الرسمي الأول من Hassan IDE",
+                "دعم كامل للغة العربية في الواجهة",
+                "نظام الترخيص والاشتراكات المتكامل",
                 "باقات Starter و Pro و Teams",
-                "دعم Windows و macOS و Linux"
+                "دعم Windows x64 و ARM64",
+                "دعم macOS Intel و Apple Silicon",
+                "دعم Linux (Ubuntu, Debian, Fedora)",
+                "محرر أكواد متقدم مع تلوين الصياغة",
+                "دعم أكثر من 50 لغة برمجة",
+                "تكامل مع Git و GitHub",
+                "Terminal مدمج",
+                "Extensions marketplace"
             ]
         }
     }
