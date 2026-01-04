@@ -18,19 +18,16 @@ name: "🚀 Build HassanIDE - All Platforms"
 # المُحفّزات (Triggers)
 # =============================================================================
 on:
-  # يعمل عند push على main
+  # يعمل عند push على main أو إنشاء tags
   push:
     branches:
       - main
+    tags:
+      - 'v*'
     paths-ignore:
       - '**.md'
       - 'docs/**'
       - '.github/ISSUE_TEMPLATE/**'
-
-  # يعمل عند إنشاء tags بصيغة v*
-  push:
-    tags:
-      - 'v*'
 
   # يدعم التشغيل اليدوي من واجهة GitHub
   workflow_dispatch:
